@@ -4,6 +4,8 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Properties;
 
 public class ConfigReader {
@@ -20,5 +22,29 @@ public class ConfigReader {
 
     public String getApiKey() {
         return properties.getProperty("apiKey");
+    }
+
+    /**
+     * Columns written only when a row is created, separated by ";" (key protected.columns).
+     * @return null when the key does not exist (the default list of Spreadsheet applies); empty if the key is empty
+     */
+    public List<String> getProtectedColumns() {
+        String value = properties.getProperty("protected.columns");
+        if (value == null)
+            return null;
+        List<String> titles = new ArrayList<>();
+        for (String title : value.split(";"))
+            if (!title.isBlank())
+                titles.add(title.trim());
+        return titles;
+    }
+
+    /**
+     * Local tests only: file where a copy of each workbook is written before its upload (key debug.copy).
+     * @return null when the key is unset or empty (the server never writes such a copy)
+     */
+    public String getDebugCopy() {
+        String path = properties.getProperty("debug.copy", "").trim();
+        return path.isEmpty() ? null : path;
     }
 }

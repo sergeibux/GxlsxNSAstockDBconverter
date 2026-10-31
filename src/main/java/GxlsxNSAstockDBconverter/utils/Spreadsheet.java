@@ -16,11 +16,18 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.format.ResolverStyle;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
 
 public class Spreadsheet {
     /** Cell text as displayed in the spreadsheet (numbers and dates included). */
@@ -37,7 +44,19 @@ public class Spreadsheet {
     /** Kind of values held by a column, deduced from its cells (the changes file only carries text). */
     private enum ColumnKind { TEXT, NUMBER, DATE }
 
+    /**
+     * Columns written only when the row is created (reference unknown to the sheet): the identification and the
+     * characteristic of an equipment never change afterwards. Replaced by the protected.columns key if it exists.
+     */
+    public static final List<String> DEFAULT_PROTECTED_COLUMNS =
+            List.of("Identification", "Identification Bloc", "Type", "Type de Blocs");
+
     private CellStyle defaultDateStyle;
+    private final Set<String> protectedColumns = new HashSet<>();
+    /** Rows added during this run (sheet + reference): their protected columns can still be written. */
+    private final Set<String> createdRows = new HashSet<>();
+    /** Sheets changed during this run, with the index of their header row (for stampStateDate). */
+    private final Map<String, Integer> changedSheets = new LinkedHashMap<>();
 
     private ByteArrayOutputStream baos;
     private String fileName;
@@ -46,6 +65,7 @@ public class Spreadsheet {
     public Spreadsheet(String fileName, ByteArrayOutputStream baos) throws IOException {
         this.fileName = fileName;
         this.baos = baos;
+        setProtectedColumns(DEFAULT_PROTECTED_COLUMNS);
 
         ByteArrayInputStream inputStream = new ByteArrayInputStream(baos.toByteArray());
         if (fileName.endsWith(".xlsx")) {
@@ -148,15 +168,21 @@ public class Spreadsheet {
             Logger.WARN("\"" + id + "\" not found in sheet " + sheetName + ": nothing to mark");
             return;
         }
+        String rowKey = sheetName + "\u0000" + key;
         if (target == null) {
             target = appendRow(sheet, lastFilledRow);
             target.getCell(idCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK).setCellValue(id);
+            createdRows.add(rowKey);
             Logger.LOG("\"" + id + "\" not found: added on row " + (target.getRowNum() + 1));
+        } else if (protectedColumns.contains(normalize(editColName)) && !createdRows.contains(rowKey)) {
+            Logger.WARN("Column \"" + editColName + "\" of \"" + id + "\" is only written when the row is created: change not applied");
+            return;
         }
 
         Cell cell = target.getCell(editCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
         Logger.LOG("Change value " + FORMATTER.formatCellValue(cell) + " to " + newValue);
         writeValue(sheet, cell, columnKind(sheet, editCol, idCol, header.getRowNum()), newValue);
+        changedSheets.put(sheetName, header.getRowNum());
 
         modifiedOutputStream = new ByteArrayOutputStream();
         try {
@@ -175,6 +201,45 @@ public class Spreadsheet {
 //        } catch (IOException e) {
 //            throw new RuntimeException(e);
 //        }
+    }
+
+    /**
+     * Sets the date of the state ("Etat et position au …") of every sheet changed during this run: the first cell
+     * with a date format on the row right under the titles. Its display format is kept.
+     */
+    public void stampStateDate(LocalDate date) {
+        if (changedSheets.isEmpty())
+            return;
+        for (Map.Entry<String, Integer> changed : changedSheets.entrySet()) {
+            Row row = workbook.getSheet(changed.getKey()).getRow(changed.getValue() + 1);
+            Cell dateCell = null;
+            if (row != null)
+                for (Cell cell : row)
+                    if (cell.getCellType() == CellType.NUMERIC && hasDateFormat(cell)) {
+                        dateCell = cell;
+                        break;
+                    }
+            if (dateCell == null) {
+                Logger.WARN("No state date under the titles of sheet " + changed.getKey() + ": not updated");
+                continue;
+            }
+            Logger.LOG("State date of sheet " + changed.getKey() + ": " + FORMATTER.formatCellValue(dateCell) + " -> " + date);
+            dateCell.setCellValue(date);
+        }
+        ByteArrayOutputStream modified = new ByteArrayOutputStream();
+        try {
+            workbook.write(modified);
+            setBaos(modified);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    /** Replaces the protected columns (titles compared like the headers: case and whitespace ignored). */
+    public void setProtectedColumns(Collection<String> titles) {
+        protectedColumns.clear();
+        for (String title : titles)
+            protectedColumns.add(normalize(title));
     }
 
     /**

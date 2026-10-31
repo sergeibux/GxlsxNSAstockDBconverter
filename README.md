@@ -50,6 +50,12 @@ fileName.blocs=Liste de blocs
 fileName.det_et_stabs=Liste des Détendeurs et Stab du NSA
 # Path to the service account JSON key (relative to the working directory or absolute)
 apiKey=/path/to/service-account-key.json
+# Changes file processed by run.sh (optional, read by run.sh only)
+changes.file=/opt/NSA/changes.jsonl
+# Columns written only when a row is created, ";"-separated (optional: this is the default list)
+#protected.columns=Identification;Identification Bloc;Type;Type de Blocs
+# Local tests only: copy of each workbook written before its upload (leave unset on the server)
+#debug.copy=debug.xlsx
 ```
 
 | Key | Meaning |
@@ -57,6 +63,9 @@ apiKey=/path/to/service-account-key.json
 | `fileName.blocs` | Tank inventory workbook (sheet `BLOCS`) |
 | `fileName.det_et_stabs` | Regulators / BCDs workbook (sheets `Détendeur NSA`, `Stab NSA`) |
 | `apiKey` | Path of the service account JSON key file |
+| `protected.columns` | Columns written only when the row is created (reference unknown to the sheet), `;`-separated. Absent: `Identification;Identification Bloc;Type;Type de Blocs` (defined in the code). Present but empty: no protected column |
+| `debug.copy` | **Local tests only**: file where a copy of each workbook is written before its upload. Unset (the default): no copy. Never set it on the server: the copy holds the club's data |
+| `changes.file` | Changes file processed by `run.sh` (default `/opt/NSA/changes.jsonl`); `run.sh` reads it from `/etc/NSA/GxlsxNSAstockDB_converter.conf` |
 
 The file name is matched against the **first 10 files** returned by Drive for the service
 account (if several match, the last one wins): keep the shared folder small, or the
@@ -102,6 +111,10 @@ Rules:
 - **Reference missing from the sheet**: a cell change adds a new row below the last filled one (formatted like it,
   following rows shifted down if that row is used); a `delete` is only logged.
 - **Reference found on several rows**, unknown column: the change is not applied and is logged.
+- **State date**: in every sheet changed during the run, the first date on the row right under the titles
+  (the date of "Etat et position au") is set to the current date (Europe/Paris), its display format kept.
+- **Protected columns** (identification, characteristic: see `protected.columns`): written only on a row added
+  during the run; a change of such a column on an existing row is not applied and is logged.
 - **Value types**, deduced from the equipment rows of the column: a column holding at least one real date takes
   dates sent as `JJ/MM/AAAA` (real dates, display format kept or taken from the cell above, `D/M/YYYY` by
   default); a column of numbers takes numbers (comma or dot); any other column stays text (serial numbers…).
@@ -133,20 +146,24 @@ Exactly one argument is required (the change file).
 | `2` | Workbook not found on Drive (check `fileName.*`) |
 | `3` | Changes not (all) uploaded: Drive unreachable, download/upload error, or a workbook still changed on Drive after 10 attempts. Run again later with the same file (applying a change twice gives the same result) |
 
-Each processed workbook is also written to `debug.xlsx` in the working directory before
-upload; as both workbooks use the same name, the file holds the last one.
+With `debug.copy` set (local tests only), each processed workbook is also written to that file before its
+upload; as both workbooks use the same file, it holds the last one.
 
 ### Helper script
 
-`run.sh` expects the change file at `/tmp/changed_records.nsa`:
+`run.sh` processes the changes file (`changes.file`, default `/opt/NSA/changes.jsonl`), for cron:
 
 ```bash
 ./run.sh            # run the existing jar
 ./run.sh compile    # mvn package, then run
 ```
 
-It renames `/tmp/changed_records.nsa` with a timestamp during the run and puts it back
-afterwards (test mode: the file is not deleted).
+- The file is renamed before being read: changes written by the server during the run go to a new file.
+  A writer must hold an exclusive lock on `<changes file>.lock` while appending (`flock`).
+- Exit code `0`: the processed changes are deleted. Any other code: they are kept in
+  `<changes file>.processing` and replayed first at the next run, before the newer ones.
+- Only one run at a time (lock `<changes file>.run.lock`): a run started while another is in progress
+  stops immediately.
 
 ### Build without Maven (IntelliJ)
 

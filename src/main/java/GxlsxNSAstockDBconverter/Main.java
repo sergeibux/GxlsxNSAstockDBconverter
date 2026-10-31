@@ -12,6 +12,8 @@ import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.GeneralSecurityException;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +29,12 @@ public class Main {
     private static final int EXIT_RETRY_LATER = 3;
     /** Drive access for a file name and a service account key; replaced by a fake in tests. */
     static BiFunction<String, String, GglApiLayer> driveLayers = GglApiLayer::new;
+    /** Local tests only (key debug.copy): copy of each workbook written before its upload; null on the server. */
+    static String debugCopy;
+    /** The club's time zone: the server clock is UTC, a run just after midnight must write the club's date. */
+    private static final ZoneId CLUB_ZONE = ZoneId.of("Europe/Paris");
+    /** Columns written only when a row is created (key protected.columns); null: default list of Spreadsheet. */
+    static List<String> protectedColumns;
 
     public static void main(String[] args) {
 
@@ -44,6 +52,8 @@ public class Main {
             ConfigReader config = new ConfigReader(confFile);
             String serviceAccountKey = config.getApiKey();
             List<String> changes = readChanges(changedRecordsFile);
+            debugCopy = config.getDebugCopy();
+            protectedColumns = config.getProtectedColumns();
             allUploaded &= syncWorkbook("BLOCS", config.getFileName("blocs"), changes, serviceAccountKey);
             allUploaded &= syncWorkbook("Détendeur NSA_Stab NSA", config.getFileName("det_et_stabs"), changes, serviceAccountKey);
         } catch (IOException e) {
@@ -81,17 +91,21 @@ public class Main {
             }
             try {
                 Spreadsheet spreadsheet = tcpLayer.downloadFile();
+                if (protectedColumns != null)
+                    spreadsheet.setProtectedColumns(protectedColumns);
                 Map<String, Spreadsheet> workbook = Map.of(key, spreadsheet);
                 for (String ln : mine)
                     editFile(ln, workbook);
+                spreadsheet.stampStateDate(LocalDate.now(CLUB_ZONE));
                 if (!tcpLayer.isUnchangedSinceDownload()) {
                     Logger.WARN(spreadsheet.getFileName() + " changed on Drive during the run: attempt "
                             + attempt + "/" + MAX_ATTEMPTS + ", processed again");
                     continue;
                 }
-                try (FileOutputStream fos = new FileOutputStream("debug.xlsx")) {
-                    spreadsheet.getWorkbook().write(fos);
-                }
+                if (debugCopy != null)
+                    try (FileOutputStream fos = new FileOutputStream(debugCopy)) {
+                        spreadsheet.getWorkbook().write(fos);
+                    }
                 tcpLayer.uploadFile(spreadsheet.getBaos());
                 return true;
             } catch (IOException | GeneralSecurityException e) {
