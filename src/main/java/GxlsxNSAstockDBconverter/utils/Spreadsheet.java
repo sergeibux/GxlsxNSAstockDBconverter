@@ -28,6 +28,11 @@ public class Spreadsheet {
     /** Dates sent in the changes file: JJ/MM/AAAA (leading zeros optional), impossible dates refused. */
     private static final DateTimeFormatter INPUT_DATE = DateTimeFormatter.ofPattern("d/M/uuuu").withResolverStyle(ResolverStyle.STRICT);
     private static final String DEFAULT_DATE_FORMAT = "D/M/YYYY";
+    /**
+     * Written in the state column of an equipment deleted in the app: the row is kept (the spreadsheet holds data
+     * the app does not have) and a human removes it later. An import from the spreadsheets must skip such rows.
+     */
+    public static final String DELETED_MARK = "Supprimé de la NSA-app";
 
     /** Kind of values held by a column, deduced from its cells (the changes file only carries text). */
     private enum ColumnKind { TEXT, NUMBER, DATE }
@@ -78,6 +83,19 @@ public class Spreadsheet {
      * @param newValue - new value of the cell identified by col==editColNameIdx, (row identified by id, idColName)
      */
     public void editSheet (String sheetName, String idColName, String id, String editColName, String newValue) {
+        editSheet(sheetName, idColName, id, editColName, newValue, true);
+    }
+
+    /**
+     * Equipment deleted in the app: its row is marked with DELETED_MARK in the state column, never removed.
+     * An id missing from the sheet is only logged (no row is added).
+     */
+    public void markDeleted(String sheetName, String idColName, String id, String stateColName) {
+        editSheet(sheetName, idColName, id, stateColName, DELETED_MARK, false);
+    }
+
+    private void editSheet(String sheetName, String idColName, String id, String editColName, String newValue,
+                           boolean appendIfMissing) {
         ByteArrayOutputStream modifiedOutputStream;
         Sheet sheet = workbook.getSheet(sheetName);
         if (sheet == null) {
@@ -124,6 +142,10 @@ public class Spreadsheet {
         }
         if (matches > 1) {
             Logger.ERROR("\"" + id + "\" found on " + matches + " rows of sheet " + sheetName + ": change not applied");
+            return;
+        }
+        if (target == null && !appendIfMissing) {
+            Logger.WARN("\"" + id + "\" not found in sheet " + sheetName + ": nothing to mark");
             return;
         }
         if (target == null) {

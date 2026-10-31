@@ -5,9 +5,11 @@ club). It keeps the club's historical **Google Drive spreadsheets** (`.xlsx` inv
 tanks, regulators and BCDs) in line with the changes made in the NSA database:
 
 1. connects to Google Drive with a **service account**;
-2. downloads the two inventory workbooks;
-3. applies a list of cell changes read from a file (one JSON object per line);
-4. uploads the modified workbooks back to Drive (same file id, new revision).
+2. downloads each inventory workbook targeted by at least one change;
+3. applies the changes read from a file (one JSON object per line);
+4. uploads the modified workbook back to Drive (same file id, new revision), unless someone changed it on
+   Drive meanwhile: then it is downloaded and processed again, up to 10 times (manual changes are never
+   overwritten); after 10 attempts the changes are left for the next run.
 
 ---
 
@@ -73,20 +75,37 @@ The configuration file and the service account key are **not versioned** (see
 
 ## Input file
 
-One JSON object per line, each describing one cell to change:
+One JSON object per line. A cell change:
 
 ```json
-{"sheetName":"BLOCS", "idCol":"Numéro", "idKey":"B12", "editCol":"Statut", "newVal":"à contrôler"}
-{"sheetName":"Stab NSA", "idCol":"Référence", "idKey":"S-04", "editCol":"Local", "newVal":"Cabane 2"}
+{"sheetName":"Détendeur NSA", "idCol":"Identification", "idKey":"NSA DET-01", "editCol":"Etat et position au", "newVal":"Piscine"}
+{"sheetName":"Stab NSA", "idCol":"Identification", "idKey":"NSA-XXS 01", "editCol":"Date de dernière révision", "newVal":"05/03/2026"}
+```
+
+An equipment deleted in the app (its row is kept and marked, never removed):
+
+```json
+{"op":"delete", "sheetName":"Détendeur NSA", "idCol":"Identification", "idKey":"NSA DET-05", "editCol":"Etat et position au"}
 ```
 
 | Field | Meaning |
 |-------|---------|
+| `op` | Optional: `delete` marks the row with **Supprimé de la NSA-app** in `editCol`; otherwise a cell change |
 | `sheetName` | Sheet to edit (exact sheet name). It also selects the workbook: a name contained in `BLOCS` → tanks workbook, a name contained in `Détendeur NSA_Stab NSA` (e.g. `Détendeur NSA`, `Stab NSA`) → regulators/BCDs workbook (case-insensitive) |
-| `idCol` | Header of the column identifying the equipment (case-insensitive, exact) |
-| `idKey` | Value searched in `idCol` (case-insensitive, **"contains"**) – the first matching row is edited |
-| `editCol` | Header of the column to change (case-insensitive, exact) |
-| `newVal` | New cell value (written as a string) |
+| `idCol` | Title of the column identifying the equipment, looked up in the header row (case and whitespace ignored, whole title) |
+| `idKey` | Equipment reference: the row whose `idCol` cell equals it **entirely** (case and spaces ignored: `NSA DET-1` never matches `NSA DET-12`) |
+| `editCol` | Title of the column to change, in the same header row (case and whitespace ignored, whole title, e.g. `Etat et position au`) |
+| `newVal` | New value, written with the type of its column (see below); empty clears the cell |
+
+Rules:
+
+- **Reference missing from the sheet**: a cell change adds a new row below the last filled one (formatted like it,
+  following rows shifted down if that row is used); a `delete` is only logged.
+- **Reference found on several rows**, unknown column: the change is not applied and is logged.
+- **Value types**, deduced from the equipment rows of the column: a column holding at least one real date takes
+  dates sent as `JJ/MM/AAAA` (real dates, display format kept or taken from the cell above, `D/M/YYYY` by
+  default); a column of numbers takes numbers (comma or dot); any other column stays text (serial numbers…).
+  An invalid date or number is written as text with a warning.
 
 Lines with missing fields are skipped with a warning showing the expected format.
 
@@ -109,9 +128,10 @@ Exactly one argument is required (the change file).
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | Success – but also when a workbook cannot be downloaded ("nothing to do") or when an exception is caught and logged |
+| `0` | Every workbook concerned by the changes was uploaded (or no change concerned it) |
 | `1` | Wrong number of arguments, or class loading error (`NoClassDefFoundError`) |
 | `2` | Workbook not found on Drive (check `fileName.*`) |
+| `3` | Changes not (all) uploaded: Drive unreachable, download/upload error, or a workbook still changed on Drive after 10 attempts. Run again later with the same file (applying a change twice gives the same result) |
 
 Each processed workbook is also written to `debug.xlsx` in the working directory before
 upload; as both workbooks use the same name, the file holds the last one.
@@ -160,13 +180,8 @@ Not versioned (`.gitignore`): configuration and keys, `tokens/`, `target/`, `out
 - `pom.xml` declares `maven-shade-plugin` twice (only the second one sets the main class).
 - The package is named `main.java.GxlsxNSAstockDBconverter` instead of following the Maven
   layout (`GxlsxNSAstockDBconverter`).
-- `Spreadsheet.editSheet`:
-  - an `idCol` / `editCol` header that is missing, or located in column A, falls back to
-    column A;
-  - an empty target cell (`row.getCell(...) == null`) raises a `NullPointerException`;
-  - `idKey` is matched with "contains": `B1` also matches `B12`.
-- If the Drive connection fails, `Main.prepare` returns `null` and the run fails later.
-- Exit code `0` does not guarantee that the workbooks were updated (see the table above).
+- The Drive version is checked just before the upload: a manual change made in the very few milliseconds
+  between this check and the upload would still be overwritten.
 
 ## Related projects
 

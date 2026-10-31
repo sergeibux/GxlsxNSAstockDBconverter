@@ -51,4 +51,7 @@ jd-gui-*.jar
 lib/
 
 ### IntelliJ (user-specific) ###
-.idea/workspace.xml
+.idea/*
+
+### other ###
+.~*

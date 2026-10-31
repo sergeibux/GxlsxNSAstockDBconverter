@@ -26,6 +26,8 @@ import static java.lang.System.exit;
 public class GglApiLayer {
     private String fileId;
     private String fileName;
+    /** Drive version of the file when it was downloaded: any change on Drive increases it. */
+    private Long downloadedVersion;
     private final String serviceAccountKey;
     private static final int MAX_RETRIES = 3;
 
@@ -108,7 +110,15 @@ public class GglApiLayer {
                     exit (2);
                 }
 
+                // version read before and after the download: a file changed meanwhile is downloaded again
+                Long before = currentVersion(service);
                 service.files().get(fileId).executeMediaAndDownloadTo(outputStream);
+                if (!before.equals(currentVersion(service))) {
+                    Logger.WARN(fileName + " changed on Drive during the download: downloading again");
+                    retryCount++;
+                    continue;
+                }
+                downloadedVersion = before;
 
 /*                ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 service.files()
@@ -129,6 +139,15 @@ public class GglApiLayer {
             }
         }
         throw new IOException("Fail after " + MAX_RETRIES + " tries");
+    }
+
+    /** @return true if nobody changed the file on Drive since downloadFile() (its version did not increase) */
+    public boolean isUnchangedSinceDownload() throws IOException, GeneralSecurityException {
+        return downloadedVersion != null && downloadedVersion.equals(currentVersion(getDriveService()));
+    }
+
+    private Long currentVersion(Drive service) throws IOException {
+        return service.files().get(fileId).setFields("version").execute().getVersion();
     }
 
     public void uploadFile(ByteArrayOutputStream spreadsheet) throws IOException, GeneralSecurityException {
