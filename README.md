@@ -94,12 +94,12 @@ One JSON object per line. A cell change:
 An equipment deleted in the app (its row is kept and marked, never removed):
 
 ```json
-{"op":"delete", "sheetName":"Détendeur NSA", "idCol":"Identification", "idKey":"NSA DET-05", "editCol":"Etat et position au"}
+{"op":"delete", "sheetName":"Détendeur NSA", "idCol":"Identification", "idKey":"NSA DET-05"}
 ```
 
 | Field | Meaning |
 |-------|---------|
-| `op` | Optional: `delete` marks the row with **Supprimé de la NSA-app** in `editCol`; otherwise a cell change |
+| `op` | Optional: `delete` replaces the `idCol` cell with **Supprimé de la NSA-app :** then, on a second line of the same cell, the reference (e.g. `NSA DET-05`); otherwise a cell change. `editCol` and `newVal` are not used |
 | `sheetName` | Sheet to edit (exact sheet name). It also selects the workbook: a name contained in `BLOCS` → tanks workbook, a name contained in `Détendeur NSA_Stab NSA` (e.g. `Détendeur NSA`, `Stab NSA`) → regulators/BCDs workbook (case-insensitive) |
 | `idCol` | Title of the column identifying the equipment, looked up in the header row (case and whitespace ignored, whole title) |
 | `idKey` | Equipment reference: the row whose `idCol` cell equals it **entirely** (case and spaces ignored: `NSA DET-1` never matches `NSA DET-12`) |
@@ -110,6 +110,9 @@ Rules:
 
 - **Reference missing from the sheet**: a cell change adds a new row below the last filled one (formatted like it,
   following rows shifted down if that row is used); a `delete` is only logged.
+- **Deleted equipment**: a marked row no longer matches its reference (the cell starts with
+  `Supprimé de la NSA-app :`), so an equipment recreated with the same reference gets a new row. Marking is
+  not blocked by the protected columns.
 - **Reference found on several rows**, unknown column: the change is not applied and is logged.
 - **State date**: in every sheet changed during the run, the first date on the row right under the titles
   (the date of "Etat et position au") is set to the current date (Europe/Paris), its display format kept.

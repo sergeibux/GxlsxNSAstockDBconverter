@@ -39,7 +39,7 @@ public class Spreadsheet {
      * Written in the state column of an equipment deleted in the app: the row is kept (the spreadsheet holds data
      * the app does not have) and a human removes it later. An import from the spreadsheets must skip such rows.
      */
-    public static final String DELETED_MARK = "Supprimé de la NSA-app";
+    public static final String DELETED_MARK = "Supprimé de la NSA-app :";
 
     /** Kind of values held by a column, deduced from its cells (the changes file only carries text). */
     private enum ColumnKind { TEXT, NUMBER, DATE }
@@ -103,20 +103,85 @@ public class Spreadsheet {
      * @param newValue - new value of the cell identified by col==editColNameIdx, (row identified by id, idColName)
      */
     public void editSheet (String sheetName, String idColName, String id, String editColName, String newValue) {
-        editSheet(sheetName, idColName, id, editColName, newValue, true);
+        applyEdit(sheetName, idColName, id, editColName, newValue);
     }
 
     /**
-     * Equipment deleted in the app: its row is marked with DELETED_MARK in the state column, never removed.
-     * An id missing from the sheet is only logged (no row is added).
+     * Equipment deleted in the app: its row is kept and its id cell becomes
+     * "Supprimé de la NSA-app :" + line break + the reference (wrapped text, so both lines show).
+     * An id missing from the sheet is only logged (no row is added). A marked row no longer matches its
+     * reference: an equipment recreated with the same reference gets a new row.
      */
-    public void markDeleted(String sheetName, String idColName, String id, String stateColName) {
-        editSheet(sheetName, idColName, id, stateColName, DELETED_MARK, false);
+    public void markDeleted(String sheetName, String idColName, String id) {
+        Sheet sheet = workbook.getSheet(sheetName);
+        if (sheet == null) {
+            Logger.ERROR("Cannot find sheet name:" + sheetName);
+            return;
+        }
+        RowMatch match = findRow(sheet, idColName, id);
+        if (match == null)
+            return;
+        if (match.target == null) {
+            Logger.WARN("\"" + id + "\" not found in sheet " + sheetName + ": nothing to mark");
+            return;
+        }
+        Cell cell = match.target.getCell(match.idCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
+        String reference = FORMATTER.formatCellValue(cell);
+        CellStyle wrapped = workbook.createCellStyle();
+        wrapped.cloneStyleFrom(cell.getCellStyle());
+        wrapped.setWrapText(true);
+        cell.setCellValue(DELETED_MARK + "\n" + reference);
+        cell.setCellStyle(wrapped);
+        Logger.LOG("\"" + reference + "\" marked as deleted on row " + (match.target.getRowNum() + 1));
+        changedSheets.put(sheetName, match.header.getRowNum());
+        rewrite();
     }
 
-    private void editSheet(String sheetName, String idColName, String id, String editColName, String newValue,
-                           boolean appendIfMissing) {
-        ByteArrayOutputStream modifiedOutputStream;
+    /** Header row, id column and row of an id: null (error logged) if the column or a single row cannot be told. */
+    private static final class RowMatch {
+        Row header;
+        int idCol;
+        Row target;            // null if the id is not in the sheet
+        int lastFilledRow;     // last row with an id, where a new row is appended after
+    }
+
+    private RowMatch findRow(Sheet sheet, String idColName, String id) {
+        // Header row: the first one holding the id column title
+        RowMatch match = new RowMatch();
+        for (Row row : sheet) {
+            match.idCol = findColumn(row, idColName);
+            if (match.idCol >= 0) {
+                match.header = row;
+                break;
+            }
+        }
+        if (match.header == null) {
+            Logger.ERROR("Column \"" + idColName + "\" not found in sheet " + sheet.getSheetName() + ": change not applied");
+            return null;
+        }
+
+        String key = normalize(id);
+        int matches = 0;
+        match.lastFilledRow = match.header.getRowNum();
+        for (int r = match.header.getRowNum() + 1; r <= sheet.getLastRowNum(); r++) {
+            Row row = sheet.getRow(r);
+            String value = (row == null) ? "" : FORMATTER.formatCellValue(row.getCell(match.idCol));
+            if (value.isBlank())
+                continue;
+            match.lastFilledRow = r;
+            if (normalize(value).equals(key)) {
+                match.target = row;
+                matches++;
+            }
+        }
+        if (matches > 1) {
+            Logger.ERROR("\"" + id + "\" found on " + matches + " rows of sheet " + sheet.getSheetName() + ": change not applied");
+            return null;
+        }
+        return match;
+    }
+
+    private void applyEdit(String sheetName, String idColName, String id, String editColName, String newValue) {
         Sheet sheet = workbook.getSheet(sheetName);
         if (sheet == null) {
             Logger.ERROR("Cannot find sheet name:" + sheetName);
@@ -124,53 +189,22 @@ public class Spreadsheet {
         }
         Logger.LOG("looking for \"" + id + "\" in \"" + idColName + "\" to be replaced by: " + newValue);
 
-        // Header row: the first one holding the id column title; the edited column is looked up in the same row
-        Row header = null;
-        int idCol = -1;
-        int editCol = -1;
-        for (Row row : sheet) {
-            idCol = findColumn(row, idColName);
-            if (idCol >= 0) {
-                header = row;
-                editCol = findColumn(row, editColName);
-                break;
-            }
-        }
-        if (header == null) {
-            Logger.ERROR("Column \"" + idColName + "\" not found in sheet " + sheetName + ": change not applied");
+        RowMatch match = findRow(sheet, idColName, id);
+        if (match == null)
             return;
-        }
+        Row header = match.header;
+        int idCol = match.idCol;
+        int editCol = findColumn(header, editColName);
         if (editCol < 0) {
             Logger.ERROR("Column \"" + editColName + "\" not found in sheet " + sheetName + ": change not applied");
             return;
         }
 
         String key = normalize(id);
-        Row target = null;
-        int matches = 0;
-        int lastFilledRow = header.getRowNum();
-        for (int r = header.getRowNum() + 1; r <= sheet.getLastRowNum(); r++) {
-            Row row = sheet.getRow(r);
-            String value = (row == null) ? "" : FORMATTER.formatCellValue(row.getCell(idCol));
-            if (value.isBlank())
-                continue;
-            lastFilledRow = r;
-            if (normalize(value).equals(key)) {
-                target = row;
-                matches++;
-            }
-        }
-        if (matches > 1) {
-            Logger.ERROR("\"" + id + "\" found on " + matches + " rows of sheet " + sheetName + ": change not applied");
-            return;
-        }
-        if (target == null && !appendIfMissing) {
-            Logger.WARN("\"" + id + "\" not found in sheet " + sheetName + ": nothing to mark");
-            return;
-        }
+        Row target = match.target;
         String rowKey = sheetName + "\u0000" + key;
         if (target == null) {
-            target = appendRow(sheet, lastFilledRow);
+            target = appendRow(sheet, match.lastFilledRow);
             target.getCell(idCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK).setCellValue(id);
             createdRows.add(rowKey);
             Logger.LOG("\"" + id + "\" not found: added on row " + (target.getRowNum() + 1));
@@ -183,24 +217,18 @@ public class Spreadsheet {
         Logger.LOG("Change value " + FORMATTER.formatCellValue(cell) + " to " + newValue);
         writeValue(sheet, cell, columnKind(sheet, editCol, idCol, header.getRowNum()), newValue);
         changedSheets.put(sheetName, header.getRowNum());
+        rewrite();
+    }
 
-        modifiedOutputStream = new ByteArrayOutputStream();
+    /** Serializes the workbook into baos, the content uploaded at the end of the run. */
+    private void rewrite() {
+        ByteArrayOutputStream modifiedOutputStream = new ByteArrayOutputStream();
         try {
             workbook.write(modifiedOutputStream);
             setBaos(modifiedOutputStream);
         } catch (IOException e) {
-            throw new RuntimeException(e);
+            throw new UncheckedIOException(e);
         }
-//
-//            Sheet sheet = workbook.getSheet(sheetName);
-
-
-//        try {
-//            baos.flush();
-//            workbook.write(baos);
-//        } catch (IOException e) {
-//            throw new RuntimeException(e);
-//        }
     }
 
     /**
@@ -226,13 +254,7 @@ public class Spreadsheet {
             Logger.LOG("State date of sheet " + changed.getKey() + ": " + FORMATTER.formatCellValue(dateCell) + " -> " + date);
             dateCell.setCellValue(date);
         }
-        ByteArrayOutputStream modified = new ByteArrayOutputStream();
-        try {
-            workbook.write(modified);
-            setBaos(modified);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
+        rewrite();
     }
 
     /** Replaces the protected columns (titles compared like the headers: case and whitespace ignored). */

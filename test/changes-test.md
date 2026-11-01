@@ -22,7 +22,7 @@ Expected result (exit code 0):
 | 7 | NSA DET-02 › Type | **not written** (protected column on an existing row), warning |
 | 8 | NSA DET-02 › Colonne inconnue | **not written**, error in the log |
 | 9-12 | NSA DET-TEST-01 (unknown) | **new row** below the last one: state, type (allowed on a new row), two real dates |
-| 13 | delete NSA DET-05 | Etat = **Supprimé de la NSA-app**, row kept |
+| 13 | delete NSA DET-05 | Identification = **Supprimé de la NSA-app :** / `NSA DET-05` (two lines, wrapped), other cells and row kept |
 | 14 | delete NSA DET-99 (unknown) | nothing written, warning, no row added |
 | 15 | NSA-XXS 01 › Affectation initiale = Milieu naturel | written |
 | 16-17 | NSA-XXS 02 › révision dates | real dates 20/09/2026 and 20/09/2027 |

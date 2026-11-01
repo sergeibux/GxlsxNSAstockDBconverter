@@ -150,8 +150,7 @@ public class Main {
                         spreadsheet.getValue().markDeleted(
                                 json.get("sheetName").getAsString(),
                                 json.get("idCol").getAsString(),
-                                json.get("idKey").getAsString(),
-                                json.get("editCol").getAsString());
+                                json.get("idKey").getAsString());
                     else
                         spreadsheet.getValue().editSheet(
                                 json.get("sheetName").getAsString(),
@@ -171,8 +170,8 @@ public class Main {
                 "\n" + params +
                 "\n Expected params :" +
                 "\n{\"sheetName\":\"val\", \"idCol\":\"val\", \"idKey\":\"val\", \"editCol\":\"val\", \"newVal\":\"val\"}" +
-                "\nor, for an equipment deleted in the app (row marked in the state column):" +
-                "\n{\"op\":\"delete\", \"sheetName\":\"val\", \"idCol\":\"val\", \"idKey\":\"val\", \"editCol\":\"<state column>\"}");
+                "\nor, for an equipment deleted in the app (its identification cell is marked):" +
+                "\n{\"op\":\"delete\", \"sheetName\":\"val\", \"idCol\":\"val\", \"idKey\":\"val\"}");
     }
 
 }
