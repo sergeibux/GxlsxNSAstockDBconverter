@@ -9,7 +9,7 @@
 set -u
 
 readonly CONF_FILE="/etc/NSA/GxlsxNSAstockDB_converter.conf"
-readonly JAR="/opt/NSA/GxlsxNSAstockDBconverter-1.0.2.jar"
+readonly JAR="/opt/NSA/GxlsxNSAstockDBconverter-latest.jar"
 readonly LOCK_FILE="/var/lib/nsa/drive/converter.lock"
 
 log() {

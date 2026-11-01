@@ -14,6 +14,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Reads the NSA-app database of the organisation (orgs/&lt;ORG&gt;.db, read-only) and computes, for every
@@ -47,10 +48,12 @@ public final class StockDb {
 
     public static final String STATE_COLUMN = "Etat et position au";
     static final String LOAN_STATE = "Prêt en cours à : ";
-    /** equipment.status (EquipmentStatus on the app side) => state; any other status: the place name. */
-    static final Map<String, String> STATE_OF_STATUS = Map.of(
-            "à contrôler", "En révision",
-            "non disponible", "Non disponible");
+    /**
+     * State texts written by the versions before 01/11/2026 for a status (à contrôler, non disponible). The status
+     * is no longer written: "En révision" is only typed by hand in the workbooks (in the app, both statuses are
+     * the box "indisponible à l'emprunt"). Such a value in an old snapshot means "unchanged" (see Snapshot.diff).
+     */
+    static final Set<String> LEGACY_STATUS_STATES = Set.of("En révision", "Non disponible");
     private static final ZoneId CLUB_ZONE = ZoneId.of("Europe/Paris");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
@@ -139,8 +142,8 @@ public final class StockDb {
         SheetColumns sheet = SHEETS.get(type);
         LinkedHashMap<String, String> values = new LinkedHashMap<>();
         if (sheet != null) {
-            put(values, STATE_COLUMN, borrower != null ? LOAN_STATE + borrower
-                    : STATE_OF_STATUS.getOrDefault(status, place));
+            // the borrower during a loan, else the place; the status is never written (see LEGACY_STATUS_STATES)
+            put(values, STATE_COLUMN, borrower != null ? LOAN_STATE + borrower : place);
             put(values, sheet.feature, feature);
             if (lastRevisionTs > 0) {
                 put(values, sheet.lastRevision, date(lastRevisionTs));

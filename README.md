@@ -119,8 +119,11 @@ Values computed for each equipment (sheet chosen by the type of the app):
 | `Détendeur` | `Détendeur NSA` | `Identification` | `Type` | `Date de dernière révision`, `Date de prochaine révision` | – |
 | `STAB` | `Stab NSA` | `Identification` | `Type` | `Date de dernière révision`, `Date de prochaine révision` | `Affectation initiale` |
 
-- `Etat et position au`: `Prêt en cours à : <first name> <last name>` during a loan, else `En révision`
-  (status *à contrôler*), `Non disponible` (status *non disponible*), else the name of its place.
+- `Etat et position au`: `Prêt en cours à : <first name> <last name>` during a loan, else the name of its
+  place. The status is never written: in the app, *à contrôler* and *non disponible* are both the box
+  "indisponible à l'emprunt", which does not mean "under revision"; `En révision` is only typed by hand in the
+  workbooks (and imported as that box checked). A snapshot written by a version before 1.0.3 may hold
+  `En révision` or `Non disponible` for this column: that cell is kept as it is.
 - Revision dates: last revision, and last revision + revision interval of the type (`JJ/MM/AAAA`,
   Europe/Paris). Requalification columns are never written, nor the columns typed by hand (owner,
   manufacturer, serial number, inspector, status, purchase date…).
@@ -133,8 +136,8 @@ Changes since the snapshot (deletions first):
 | New equipment | new row with every known value |
 | Equipment deleted | identification cell marked `Supprimé de la NSA-app :` + reference (row kept) |
 | Reference changed (case and spaces ignored) | old row marked deleted, new row with every known value (columns typed by hand are not copied) |
-| Loan, return, place, status, revision, stock, member or place renamed | the columns whose value changed |
-| Characteristic changed | the characteristic column |
+| Loan, return, place, revision, stock, characteristic, member or place renamed | the columns whose value changed |
+| Status changed (box "indisponible à l'emprunt") | nothing |
 | Type changed, or type without a sheet | nothing, warning |
 
 Several changes between two runs give one write of the final value; an equipment deleted then created again
@@ -165,10 +168,10 @@ Which rows:
 | In the workbook | In the database |
 |-----------------|-----------------|
 | Reference unknown to the database | equipment created (`creationTs`: now) |
-| `Etat et position au`: `En révision`, `En réparation` | status *à contrôler* (place unchanged) |
-| `Non disponible`, `Non conforme`, `Villa - Non coforme`, `Retiré sur demande` | status *non disponible* (place unchanged) |
+| `Etat et position au`: `En révision`, `En réparation` | status *à contrôler*: box "indisponible à l'emprunt" checked (place unchanged) |
+| `Non disponible`, `Non conforme`, `Villa - Non coforme`, `Retiré sur demande` | status *non disponible*: box checked too (place unchanged) |
 | `Prêt en cours à : …`, empty | nothing (loans are made in the app only) |
-| Any other text | status *disponible*, and that place (created if no place has this name) |
+| Any other text | that place (created if no place has this name); the status does not change (an equipment declared unavailable in the app keeps showing its place): after a revision noted in the workbook, uncheck the box in the app. New equipment: *disponible* |
 | Characteristic (`Type`, `Type de Blocs`) | characteristic of the type with that text (created if none), line breaks kept; created empty: `Non renseigné` |
 | Last revision / inspection date | `lastRevisionTs` (midnight, Europe/Paris); created without a date: 0, revision due (warning) |
 | `Affectation initiale` (stabs) | stock of that name (unknown name: warning); created without one: `Milieu naturel` |
@@ -248,7 +251,7 @@ Lines with missing fields are skipped with a warning showing the expected format
 
 ```bash
 mvn package
-# -> target/GxlsxNSAstockDBconverter-1.0.2.jar (shaded, runnable, ~29 MB)
+# -> target/GxlsxNSAstockDBconverter-1.0.3.jar (shaded, runnable, ~29 MB)
 ```
 
 Use this jar: the IntelliJ artifact does not contain the Google and SQLite libraries (`NoClassDefFoundError`).
@@ -256,8 +259,8 @@ Use this jar: the IntelliJ artifact does not contain the Google and SQLite libra
 ## Run
 
 ```bash
-java -jar GxlsxNSAstockDBconverter-1.0.2.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
-java -jar GxlsxNSAstockDBconverter-1.0.2.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
+java -jar GxlsxNSAstockDBconverter-1.0.3.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
+java -jar GxlsxNSAstockDBconverter-1.0.3.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
 ```
 
 Options in any order. Each run logs one summary line when something was written
@@ -277,7 +280,7 @@ upload; as both workbooks use the same file, it holds the last one.
 
 ### Helper script
 
-`run.sh`, for cron: runs the jar (`/opt/NSA/GxlsxNSAstockDBconverter-1.0.2.jar`) in database mode with
+`run.sh`, for cron: runs the jar (`/opt/NSA/GxlsxNSAstockDBconverter-latest.jar`, a copy of the version to use) in database mode with
 `/etc/NSA/GxlsxNSAstockDB_converter.conf`, from its own directory (relative paths of the configuration).
 
 - Only one run at a time (lock `/var/lib/nsa/drive/converter.lock`): a run started while another is in
@@ -290,7 +293,7 @@ upload; as both workbooks use the same file, it holds the last one.
 # 1. directory of the snapshot and of the lock, for the cron user only
 sudo install -d -o www-data -g www-data -m 700 /var/lib/nsa/drive
 # 2. jar and script (built with mvn package)
-sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.2.jar /opt/NSA/
+sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.3.jar /opt/NSA/GxlsxNSAstockDBconverter-latest.jar
 sudo install -o root -g www-data -m 750 run.sh /opt/NSA/runGdrive.sh
 # 3. configuration: db.file and snapshot.file (changes.file is no longer used); key and conf readable by www-data
 C=/etc/NSA/GxlsxNSAstockDB_converter.conf

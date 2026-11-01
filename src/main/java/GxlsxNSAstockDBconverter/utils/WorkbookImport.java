@@ -59,7 +59,11 @@ public final class WorkbookImport {
     static final String AVAILABLE = "disponible";
     static final String TO_CHECK = "à contrôler";
     static final String UNAVAILABLE = "non disponible";
-    /** State texts (case and spaces ignored) => status; any other text is a place name (status available). */
+    /**
+     * State texts (case and spaces ignored) => status (in the app: the box "indisponible à l'emprunt" checked);
+     * any other text is a place name, which never changes the status of a known equipment: the export writes
+     * only the place, an equipment declared unavailable in the app keeps showing its place.
+     */
     static final Map<String, String> STATUS_OF_STATE = new HashMap<>();
     static {
         for (String state : List.of("En révision", "En réparation"))
@@ -458,7 +462,7 @@ public final class WorkbookImport {
             Integer newPlace = null;
             State s = memberOwned(row) || e.loaned ? null : state(row.state);   // loans: app only
             if (s != null) {
-                if (s.status != null && !s.status.equals(e.status))
+                if (s.place == null && !s.status.equals(e.status))      // place: status unchanged
                     values.addProperty("status", s.status);
                 if (s.place != null) {
                     String currentPlace = e.place == null ? null : db.places.get(e.place);
@@ -471,7 +475,7 @@ public final class WorkbookImport {
                             plan.deferred = true;
                         } else {
                             newPlace = placeId(s.place, group);
-                            values.addProperty("status", s.status);     // moves lastUpdate like the app does
+                            values.addProperty("status", e.status);     // unchanged, moves lastUpdate like the app does
                         }
                     }
                 }
@@ -490,7 +494,12 @@ public final class WorkbookImport {
                 group.changes.add(delete);
                 group.changes.add(placeLink(e.id, newPlace));
             }
-            Logger.LOG(group.label + ": changed in the workbook: " + values.keySet() + (newPlace == null ? "" : " + place"));
+            Set<String> changed = new java.util.LinkedHashSet<>(values.keySet());
+            if (newPlace != null) {
+                changed.remove("status");           // sent unchanged with the place
+                changed.add("place");
+            }
+            Logger.LOG(group.label + ": changed in the workbook: " + changed);
             plan.updated++;
             return group;
         }
@@ -563,7 +572,7 @@ public final class WorkbookImport {
         }
     }
 
-    /** Meaning of a state cell: a status, and/or a place (status available). */
+    /** Meaning of a state cell: a status, or a place (status available for a new equipment). */
     private static final class State {
         final String status, place;
 

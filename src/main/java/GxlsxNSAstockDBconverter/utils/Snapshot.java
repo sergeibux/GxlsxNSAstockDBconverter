@@ -138,9 +138,15 @@ public final class Snapshot {
                 deletions.add(deletion(before));
                 addAll(edits, now);
             } else {
-                for (Map.Entry<String, String> value : now.values.entrySet())
-                    if (!value.getValue().equals(before.values.get(value.getKey())))
-                        edits.add(edit(now, value.getKey(), value.getValue()));
+                for (Map.Entry<String, String> value : now.values.entrySet()) {
+                    String old = before.values.get(value.getKey());
+                    if (value.getValue().equals(old))
+                        continue;
+                    // snapshot of a version that wrote the status: the cell holds that status, keep it
+                    if (value.getKey().equals(StockDb.STATE_COLUMN) && StockDb.LEGACY_STATUS_STATES.contains(old))
+                        continue;
+                    edits.add(edit(now, value.getKey(), value.getValue()));
+                }
             }
         }
         deletions.addAll(edits);

@@ -6,7 +6,7 @@
 real workbooks: it changes their content.
 
 ```bash
-java -jar target/GxlsxNSAstockDBconverter-1.0.2.jar --changes test/changes-test.jsonl --conf GxlsxNSAstockDB_converter.conf
+java -jar target/GxlsxNSAstockDBconverter-1.0.3.jar --changes test/changes-test.jsonl --conf GxlsxNSAstockDB_converter.conf
 ```
 
 The configuration must target the copies (`fileName.*`); the test mode reads neither the database nor the
