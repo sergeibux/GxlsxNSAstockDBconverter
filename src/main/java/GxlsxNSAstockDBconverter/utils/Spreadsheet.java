@@ -244,24 +244,33 @@ public class Spreadsheet {
 
     /**
      * A column holding at least one real date is a date column; one holding numbers but no date, a number
-     * column; any other column (serial numbers stored as text…) stays text. Only equipment rows count (id cell
+     * column; a column with no value but empty cells formatted for dates is a date column; any other column
+     * (serial numbers stored as text…) stays text. Only equipment rows count (id cell
      * holding text): the rows right under the titles may hold dates belonging to the header ("Etat et position au").
      */
     private static ColumnKind columnKind(Sheet sheet, int col, int idCol, int headerRow) {
         boolean numbers = false;
+        boolean dateFormats = false;
         for (int r = headerRow + 1; r <= sheet.getLastRowNum(); r++) {
             Row row = sheet.getRow(r);
             Cell id = (row == null) ? null : row.getCell(idCol);
             if (id == null || id.getCellType() != CellType.STRING || id.getStringCellValue().isBlank())
                 continue;
             Cell cell = row.getCell(col);
-            if (cell == null || cell.getCellType() != CellType.NUMERIC)
+            if (cell == null)
                 continue;
+            if (cell.getCellType() != CellType.NUMERIC) {
+                dateFormats |= cell.getCellType() == CellType.BLANK && hasDateFormat(cell);
+                continue;
+            }
             if (DateUtil.isCellDateFormatted(cell))
                 return ColumnKind.DATE;
             numbers = true;
         }
-        return numbers ? ColumnKind.NUMBER : ColumnKind.TEXT;
+        if (numbers)
+            return ColumnKind.NUMBER;
+        // column still empty but formatted for dates (e.g. "Date de prochaine révision" never filled yet)
+        return dateFormats ? ColumnKind.DATE : ColumnKind.TEXT;
     }
 
     /**

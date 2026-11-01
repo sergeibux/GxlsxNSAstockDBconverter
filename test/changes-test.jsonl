@@ -1,0 +1,20 @@
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-02","editCol":"Etat et position au","newVal":"Piscine"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-03","editCol":"Date de dernière révision","newVal":"15/10/2026"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-03","editCol":"Date de prochaine révision","newVal":"15/10/2027"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-04","editCol":"Etat et position au","newVal":"Prêt en cours à : Jean Test"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"nsa det-44","editCol":"Etat et position au","newVal":"En révision"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-06","editCol":"Date de dernière révision","newVal":"31/02/2026"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-02","editCol":"Type","newVal":"NE DOIT PAS ETRE ECRIT"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-02","editCol":"Colonne inconnue","newVal":"NE DOIT PAS ETRE ECRIT"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-TEST-01","editCol":"Etat et position au","newVal":"Cabane"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-TEST-01","editCol":"Type","newVal":"1er étage TEST"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-TEST-01","editCol":"Date de dernière révision","newVal":"01/11/2026"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-TEST-01","editCol":"Date de prochaine révision","newVal":"01/11/2027"}
+  {"op":"delete","sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-05","editCol":"Etat et position au"}
+  {"op":"delete","sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-99","editCol":"Etat et position au"}
+  {"sheetName":"Stab NSA","idCol":"Identification","idKey":"NSA-XXS 01","editCol":"Affectation initiale","newVal":"Milieu naturel"}
+  {"sheetName":"Stab NSA","idCol":"Identification","idKey":"NSA-XXS 02","editCol":"Date de dernière révision","newVal":"20/09/2026"}
+  {"sheetName":"Stab NSA","idCol":"Identification","idKey":"NSA-XXS 02","editCol":"Date de prochaine révision","newVal":"20/09/2027"}
+  {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-01","editCol":"Etat et position au","newVal":"Non disponible"}
+  {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-01","editCol":"Date de dernière inspection visuelle","newVal":"10/10/2026"}
+  {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-02","editCol":"Type de Blocs","newVal":"NE DOIT PAS ETRE ECRIT"}

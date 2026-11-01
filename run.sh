@@ -14,7 +14,7 @@ set -u
 
 readonly CONF_FILE="/etc/NSA/GxlsxNSAstockDB_converter.conf"
 readonly DEFAULT_CHANGES_FILE="/opt/NSA/changes.jsonl"
-readonly JAR="target/GxlsxNSAstockDBconverter-1.0-SNAPSHOT.jar"
+readonly JAR="/opt/NSA/GxlsxNSAstockDBconverter-1.0.1.jar"
 
 log() {
     echo "$(date '+%F %T') $*"
@@ -44,7 +44,7 @@ collect_new_changes() {
 }
 
 run_converter() {
-    java -jar "$JAR" "$WORK"
+    java -jar "$JAR" "$WORK" "$CONF_FILE"
 }
 
 main() {
