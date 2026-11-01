@@ -179,7 +179,7 @@ Lines with missing fields are skipped with a warning showing the expected format
 
 ```bash
 mvn package
-# -> target/GxlsxNSAstockDBconverter-1.0.1.jar (shaded, runnable, ~29 MB)
+# -> target/GxlsxNSAstockDBconverter-1.0.2.jar (shaded, runnable, ~29 MB)
 ```
 
 Use this jar: the IntelliJ artifact does not contain the Google and SQLite libraries (`NoClassDefFoundError`).
@@ -187,8 +187,8 @@ Use this jar: the IntelliJ artifact does not contain the Google and SQLite libra
 ## Run
 
 ```bash
-java -jar GxlsxNSAstockDBconverter-1.0.1.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
-java -jar GxlsxNSAstockDBconverter-1.0.1.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
+java -jar GxlsxNSAstockDBconverter-1.0.2.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
+java -jar GxlsxNSAstockDBconverter-1.0.2.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
 ```
 
 Options in any order. Each run logs one summary line when something was written
@@ -206,7 +206,7 @@ upload; as both workbooks use the same file, it holds the last one.
 
 ### Helper script
 
-`run.sh`, for cron: runs the jar (`/opt/NSA/GxlsxNSAstockDBconverter-1.0.1.jar`) in database mode with
+`run.sh`, for cron: runs the jar (`/opt/NSA/GxlsxNSAstockDBconverter-1.0.2.jar`) in database mode with
 `/etc/NSA/GxlsxNSAstockDB_converter.conf`, from its own directory (relative paths of the configuration).
 
 - Only one run at a time (lock `/var/lib/nsa/drive/converter.lock`): a run started while another is in
@@ -219,7 +219,7 @@ upload; as both workbooks use the same file, it holds the last one.
 # 1. directory of the snapshot and of the lock, for the cron user only
 sudo install -d -o www-data -g www-data -m 700 /var/lib/nsa/drive
 # 2. jar and script (built with mvn package)
-sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.1.jar /opt/NSA/
+sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.2.jar /opt/NSA/
 sudo install -o root -g www-data -m 750 run.sh /opt/NSA/runGdrive.sh
 # 3. configuration: db.file and snapshot.file (changes.file is no longer used); key and conf readable by www-data
 C=/etc/NSA/GxlsxNSAstockDB_converter.conf

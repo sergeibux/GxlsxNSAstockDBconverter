@@ -61,7 +61,9 @@ public class GglApiLayer {
                 if (code == 401 || code == 403) return false;
                 retryCount++;
             } catch (IOException | GeneralSecurityException e) {
-                Logger.ERROR_printStacktrace("retryCount (" + (retryCount + 1) + "/" + MAX_RETRIES + ") ", e.getStackTrace());
+                // e.g. "<key file> (Permission denied)": the cause must appear in the log, the stack trace does not tell it
+                Logger.ERROR_printMsg("Cannot connect to Google Drive. Retry (" + (retryCount + 1) + "/" + MAX_RETRIES + ").",
+                        e.getClass().getSimpleName() + ": " + e.getMessage());
                 retryCount++;
             } catch (NoClassDefFoundError e) {
                 try {
