@@ -30,6 +30,8 @@ public class GglApiLayer {
     private Long downloadedVersion;
     private final String serviceAccountKey;
     private static final int MAX_RETRIES = 3;
+    /** No INFO lines for a check that finds nothing to do (the cron runs often: the log stays readable). */
+    private boolean quiet;
 
     public GglApiLayer(String fileName, String serviceAccountKey) {
         this.fileId = null;
@@ -46,9 +48,11 @@ public class GglApiLayer {
                         .setPageSize(10)
                         .setFields("nextPageToken, files(id, name)")
                         .execute();
-                Logger.LOG("✅ Connection OK. " + result.getFiles().size() + " files found:");
+                if (!quiet)
+                    Logger.LOG("✅ Connection OK. " + result.getFiles().size() + " files found:");
                 for (File f : result.getFiles()) {
-                    Logger.LOG("\t-File->\t" + f.getId() + "(" + f.getName() + ")");
+                    if (!quiet)
+                        Logger.LOG("\t-File->\t" + f.getId() + "(" + f.getName() + ")");
                     if (f.getName().toUpperCase().contains(fileName.toUpperCase())) {
                         this.fileName = f.getName();
                         this.fileId = f.getId();
@@ -141,6 +145,20 @@ public class GglApiLayer {
             }
         }
         throw new IOException("Fail after " + MAX_RETRIES + " tries");
+    }
+
+    public void setQuiet(boolean quiet) {
+        this.quiet = quiet;
+    }
+
+    /** @return Drive version of the file now (after checkConnection), null if the file was not found */
+    public Long version() throws IOException, GeneralSecurityException {
+        return fileId == null ? null : currentVersion(getDriveService());
+    }
+
+    /** @return Drive version of the content returned by downloadFile() */
+    public Long getDownloadedVersion() {
+        return downloadedVersion;
     }
 
     /** @return true if nobody changed the file on Drive since downloadFile() (its version did not increase) */

@@ -4,7 +4,7 @@
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-04","editCol":"Etat et position au","newVal":"Prêt en cours à : Jean Test"}
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"nsa det-44","editCol":"Etat et position au","newVal":"En révision"}
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-06","editCol":"Date de dernière révision","newVal":"31/02/2026"}
-  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-02","editCol":"Type","newVal":"NE DOIT PAS ETRE ECRIT"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-02","editCol":"Identification","newVal":"NE DOIT PAS ETRE ECRIT"}
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-02","editCol":"Colonne inconnue","newVal":"NE DOIT PAS ETRE ECRIT"}
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-TEST-01","editCol":"Etat et position au","newVal":"Cabane"}
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-TEST-01","editCol":"Type","newVal":"1er étage TEST"}
@@ -17,7 +17,7 @@
   {"sheetName":"Stab NSA","idCol":"Identification","idKey":"NSA-XXS 02","editCol":"Date de prochaine révision","newVal":"20/09/2027"}
   {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-01","editCol":"Etat et position au","newVal":"Non disponible"}
   {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-01","editCol":"Date de dernière inspection visuelle","newVal":"10/10/2026"}
-  {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-02","editCol":"Type de Blocs","newVal":"NE DOIT PAS ETRE ECRIT"}
+  {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-02","editCol":"Type de Blocs","newVal":"12 L Acier (test)"}
   ceci n'est pas une ligne JSON
   {"op":"delete","sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-07"}
   {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-07","editCol":"Etat et position au","newVal":"Cabane"}

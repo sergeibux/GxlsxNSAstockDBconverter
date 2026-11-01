@@ -5,11 +5,14 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import main.java.GxlsxNSAstockDBconverter.utils.ConfigReader;
 import main.java.GxlsxNSAstockDBconverter.utils.GglApiLayer;
+import main.java.GxlsxNSAstockDBconverter.utils.ImportState;
+import main.java.GxlsxNSAstockDBconverter.utils.NsaApi;
 import main.java.GxlsxNSAstockDBconverter.utils.Logger;
 import main.java.GxlsxNSAstockDBconverter.utils.Snapshot;
 import main.java.GxlsxNSAstockDBconverter.utils.Spreadsheet;
 import main.java.GxlsxNSAstockDBconverter.utils.StockDb;
 import main.java.GxlsxNSAstockDBconverter.utils.StockDb.EquipmentState;
+import main.java.GxlsxNSAstockDBconverter.utils.WorkbookImport;
 
 import java.io.*;
 import java.nio.file.Files;
@@ -100,20 +103,46 @@ public class Main {
         boolean allUploaded = true;
         for (Map.Entry<String, String> workbook : WORKBOOKS.entrySet())
             allUploaded &= syncWorkbook(workbook.getKey(), config.getFileName(workbook.getValue()), changes,
-                    config.getApiKey());
+                    config.getApiKey(), false, null).ok;
         return allUploaded ? 0 : EXIT_RETRY_LATER;
     }
 
     /**
-     * Database mode: what changed in the database since the snapshot is written to the workbooks; the snapshot
-     * of an equipment advances once its changes are uploaded. First run: the snapshot is only created.
+     * Database mode:
+     * 1. what changed in the database since the snapshot is written to the workbooks; the snapshot of an
+     *    equipment advances once its changes are uploaded. First run: the snapshot is only created (with the
+     *    import: every equipment is written, the workbooks must hold the database values before the import);
+     * 2. with the import (api.url): the workbooks, which should now hold the database values, are compared with
+     *    the database and their differences (changes made by hand) are written to the database through the API.
      */
     private static int runDatabase(ConfigReader config) {
+        long runStart = System.currentTimeMillis();
         String dbFile = config.getDbFile();
         String snapshotFile = config.getSnapshotFile();
         if (dbFile == null || snapshotFile == null) {
             Logger.ERROR("db.file and snapshot.file are required in the configuration (or use --changes)");
             return EXIT_ERROR;
+        }
+        ImportState importState = null;
+        if (config.getApiUrl() != null) {
+            if (config.getApiEmail() == null || config.getApiPassword() == null || config.getImportStateFile() == null) {
+                Logger.ERROR("api.url is set: api.email, api.password and import.state.file are required");
+                return EXIT_ERROR;
+            }
+            String protectedValue = protectedImportedColumn();
+            if (protectedValue != null) {
+                Logger.ERROR("protected.columns holds \"" + protectedValue + "\", compared by the import: an app change"
+                        + " of this column would never reach the workbooks and the import would undo it."
+                        + " Remove it from protected.columns (or the key itself)");
+                return EXIT_ERROR;
+            }
+            try {
+                importState = ImportState.load(Paths.get(config.getImportStateFile()));
+            } catch (IOException e) {
+                Logger.ERROR_printMsg("Cannot read the import state (not recreated: its temporary ids would be reused)",
+                        e.getMessage());
+                return EXIT_ERROR;
+            }
         }
         Path snapshotPath = Paths.get(snapshotFile);
         Map<Integer, EquipmentState> current;
@@ -129,34 +158,132 @@ public class Main {
                     e.getMessage());
             return EXIT_ERROR;
         }
-        if (snapshot == null)
-            return saveSnapshot(snapshotPath, current, current.size() + " equipment: snapshot created, nothing written");
+        Map<Integer, EquipmentState> saved = snapshot;
+        if (snapshot == null) {
+            if (importState == null)
+                return saveSnapshot(snapshotPath, current, current.size() + " equipment: snapshot created, nothing written");
+            Logger.LOG(current.size() + " equipment: first run, every equipment is written to the workbooks before the import");
+            snapshot = new LinkedHashMap<>();
+        }
 
         List<Snapshot.Change> changes = Snapshot.diff(snapshot, current);
-        if (changes.isEmpty())                          // nothing to write: silent run
+        if (changes.isEmpty() && importState == null)   // nothing to write: silent run
             return current.equals(snapshot) ? 0 : saveSnapshot(snapshotPath, current, null);
 
         List<String> lines = changes.stream().map(c -> c.line).collect(Collectors.toList());
         Set<String> uploadedSheets = new HashSet<>();
         List<String> uploaded = new ArrayList<>();
         List<String> failed = new ArrayList<>();
+        Map<String, WorkbookSync> fetched = new LinkedHashMap<>();
         for (Map.Entry<String, String> workbook : WORKBOOKS.entrySet()) {
             String fileName = config.getFileName(workbook.getValue());
             boolean concerned = lines.stream().anyMatch(ln -> concerns(ln, workbook.getKey()));
-            if (syncWorkbook(workbook.getKey(), fileName, lines, config.getApiKey())) {
+            WorkbookSync sync = syncWorkbook(workbook.getKey(), fileName, lines, config.getApiKey(),
+                    importState != null, importState == null ? null : importState.importedVersion(workbook.getKey()));
+            if (sync.ok) {
                 for (Snapshot.Change change : changes)
                     if (workbook.getKey().toUpperCase().contains(change.sheet.toUpperCase()))
                         uploadedSheets.add(change.sheet);
                 if (concerned)
                     uploaded.add(fileName);
+                if (sync.content != null)
+                    fetched.put(workbook.getKey(), sync);
             } else
                 failed.add(fileName);
         }
-        String summary = changes.stream().map(c -> c.equipmentId).distinct().count() + " equipment changed, "
+        String summary = changes.isEmpty() ? null
+                : changes.stream().map(c -> c.equipmentId).distinct().count() + " equipment changed, "
                 + changes.size() + " cell(s); uploaded: " + (uploaded.isEmpty() ? "none" : String.join(", ", uploaded))
                 + (failed.isEmpty() ? "" : "; not uploaded, retried at the next run: " + String.join(", ", failed));
-        int code = saveSnapshot(snapshotPath, Snapshot.advance(snapshot, current, changes, uploadedSheets), summary);
-        return code != 0 ? code : failed.isEmpty() ? 0 : EXIT_RETRY_LATER;
+        if (summary != null)
+            Logger.LOG(summary);
+        Map<Integer, EquipmentState> next = Snapshot.advance(snapshot, current, changes, uploadedSheets);
+        int code = failed.isEmpty() ? 0 : EXIT_RETRY_LATER;
+        if (importState != null) {
+            int importCode = runImport(config, importState, fetched, next, runStart);
+            if (importCode == EXIT_ERROR || code == 0)
+                code = importCode;
+        }
+        if (!next.equals(saved)) {
+            int saveCode = saveSnapshot(snapshotPath, next, null);
+            if (saveCode != 0)
+                return saveCode;
+        }
+        return code;
+    }
+
+    /** @return a column compared by the import that protected.columns keeps from being written, null if none */
+    private static String protectedImportedColumn() {
+        if (protectedColumns == null)
+            return null;
+        for (String title : protectedColumns)
+            for (StockDb.SheetColumns columns : StockDb.SHEETS.values())
+                for (String imported : new String[]{StockDb.STATE_COLUMN, columns.feature, columns.lastRevision, columns.stock})
+                    if (imported != null && imported.replaceAll("\\s+", "").equalsIgnoreCase(title.replaceAll("\\s+", "")))
+                        return title;
+        return null;
+    }
+
+    /**
+     * Step 2: differences between the workbooks downloaded (or just uploaded) and the database, written to the
+     * database through the API. The equipment written enter the snapshot with their new database values: they
+     * are not written back to the workbooks. A workbook entirely imported is not downloaded again until its Drive
+     * version changes.
+     * @param next snapshot to save, updated here
+     */
+    private static int runImport(ConfigReader config, ImportState state, Map<String, WorkbookSync> fetched,
+                                 Map<Integer, EquipmentState> next, long runStart) {
+        // lastUpdate of the rows written: a change made in the app since the previous run keeps priority
+        long lastUpdate = state.lastPass() > 0 ? state.lastPass() : runStart;
+        int code = 0;
+        if (!fetched.isEmpty()) {
+            List<WorkbookImport.SheetRow> rows = new ArrayList<>();
+            for (WorkbookSync sync : fetched.values())
+                rows.addAll(WorkbookImport.readRows(sync.content.getWorkbook()));
+            boolean complete = true;
+            try {
+                WorkbookImport.Plan plan = WorkbookImport.plan(WorkbookImport.readDb(config.getDbFile()), rows,
+                        lastUpdate, runStart, state);
+                if (!plan.isEmpty()) {
+                    state.save();               // the temporary ids of the plan are never given again
+                    NsaApi api = new NsaApi(config.getApiUrl(), config.getApiOrg(), config.getApiEmail(),
+                            config.getApiPassword(), state);
+                    WorkbookImport.Result result = WorkbookImport.apply(plan, api, lastUpdate);
+                    if (result.summary() != null)
+                        Logger.LOG(result.summary());
+                    if (result.failed)
+                        code = EXIT_RETRY_LATER;
+                    complete = result.complete && !result.failed;
+                    if (!result.touched.isEmpty()) {
+                        Map<Integer, EquipmentState> fresh = StockDb.read(config.getDbFile());
+                        WorkbookImport.Db freshDb = WorkbookImport.readDb(config.getDbFile());
+                        for (Map.Entry<Integer, Long> touched : result.touched.entrySet())
+                            // not if the app changed it meanwhile: that change must still be written to the workbooks
+                            if (touched.getValue().equals(freshDb.lastUpdate(touched.getKey()))
+                                    && fresh.containsKey(touched.getKey()))
+                                next.put(touched.getKey(), fresh.get(touched.getKey()));
+                    }
+                } else
+                    complete = !plan.deferred();
+            } catch (SQLException e) {
+                Logger.ERROR_printMsg("Import: cannot read the database " + config.getDbFile(), e.getMessage());
+                code = EXIT_ERROR;
+                complete = false;
+            } catch (IOException e) {
+                Logger.ERROR_printMsg("Import: cannot write the import state " + config.getImportStateFile(), e.getMessage());
+                return EXIT_ERROR;
+            }
+            for (Map.Entry<String, WorkbookSync> sync : fetched.entrySet())
+                state.setImportedVersion(sync.getKey(), complete ? sync.getValue().version : null);
+        }
+        state.setLastPass(runStart);
+        try {
+            state.save();
+        } catch (IOException e) {
+            Logger.ERROR_printMsg("Import: cannot write the import state " + config.getImportStateFile(), e.getMessage());
+            return EXIT_ERROR;
+        }
+        return code;
     }
 
     /** @param summary logged once saved (null: nothing logged) */
@@ -173,28 +300,53 @@ public class Main {
         return 0;
     }
 
+    /** Outcome of syncWorkbook. */
+    static final class WorkbookSync {
+        /** Uploaded, or nothing to upload */
+        final boolean ok;
+        /** Workbook content after the changes (as uploaded), null if not downloaded */
+        final Spreadsheet content;
+        /** Drive version of content when this run did not change it, null otherwise */
+        final Long version;
+
+        WorkbookSync(boolean ok, Spreadsheet content, Long version) {
+            this.ok = ok;
+            this.content = content;
+            this.version = version;
+        }
+    }
+
     /**
      * Downloads the workbook, applies the changes that concern it and uploads it, unless someone changed it on
      * Drive meanwhile (its manual changes would be overwritten): then everything is done again from the download,
      * at most MAX_ATTEMPTS times.
+     * Without change for it: nothing is done, unless the content is wanted (import), then it is downloaded,
+     * if its Drive version differs from importedVersion.
      * @param key sheet names of the workbook ("BLOCS", "Détendeur NSA_Stab NSA")
-     * @return true if uploaded, or if no change concerns this workbook
      */
-    static boolean syncWorkbook(String key, String fileName, List<String> changes, String serviceAccountKey) {
+    static WorkbookSync syncWorkbook(String key, String fileName, List<String> changes, String serviceAccountKey,
+                                     boolean wantContent, Long importedVersion) {
         List<String> mine = new ArrayList<>();
         for (String ln : changes)
             if (concerns(ln, key))
                 mine.add(ln);
-        if (mine.isEmpty())
-            return true;
+        if (mine.isEmpty() && !wantContent)
+            return new WorkbookSync(true, null, null);
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             GglApiLayer tcpLayer = driveLayers.apply(fileName, serviceAccountKey);
+            tcpLayer.setQuiet(mine.isEmpty());
             if (!tcpLayer.checkConnection()) {
                 Logger.ERROR("Unable to connect to Google Drive.");
-                return false;
+                return new WorkbookSync(false, null, null);
             }
             try {
+                if (mine.isEmpty()) {
+                    Long version = tcpLayer.version();
+                    if (version != null && version.equals(importedVersion))
+                        return new WorkbookSync(true, null, null);     // unchanged since it was imported
+                    return new WorkbookSync(true, tcpLayer.downloadFile(), tcpLayer.getDownloadedVersion());
+                }
                 Spreadsheet spreadsheet = tcpLayer.downloadFile();
                 if (protectedColumns != null)
                     spreadsheet.setProtectedColumns(protectedColumns);
@@ -212,14 +364,14 @@ public class Main {
                         spreadsheet.getWorkbook().write(fos);
                     }
                 tcpLayer.uploadFile(spreadsheet.getBaos());
-                return true;
+                return new WorkbookSync(true, spreadsheet, null);
             } catch (IOException | GeneralSecurityException e) {
                 Logger.ERROR_printMsg("Cannot update " + fileName + ": changes kept for the next run.", e.getMessage());
-                return false;
+                return new WorkbookSync(false, null, null);
             }
         }
         Logger.WARN(fileName + " still changed on Drive after " + MAX_ATTEMPTS + " attempts: changes kept for the next run");
-        return false;
+        return new WorkbookSync(false, null, null);
     }
 
     /** True if the change line targets a sheet of this workbook (same rule as editFile). */

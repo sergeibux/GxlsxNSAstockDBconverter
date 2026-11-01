@@ -52,6 +52,39 @@ public class ConfigReader {
     }
 
     /**
+     * Import from the workbooks into the database, through the NSA-app API (key api.url, e.g.
+     * https://smv-coding.fr/NSA/api); null if unset: no import.
+     */
+    public String getApiUrl() {
+        return value("api.url");
+    }
+
+    /** Organisation of the API (key api.org), NSA by default. */
+    public String getApiOrg() {
+        String org = value("api.org");
+        return org == null ? "NSA" : org;
+    }
+
+    /** Account of the API used by the import (keys api.email, api.password); null if unset. */
+    public String getApiEmail() {
+        return value("api.email");
+    }
+
+    public String getApiPassword() {
+        return value("api.password");
+    }
+
+    /** State of the import (key import.state.file, mode 600: it holds the API session); null if unset. */
+    public String getImportStateFile() {
+        return value("import.state.file");
+    }
+
+    private String value(String key) {
+        String value = properties.getProperty(key, "").trim();
+        return value.isEmpty() ? null : value;
+    }
+
+    /**
      * Local tests only: file where a copy of each workbook is written before its upload (key debug.copy).
      * @return null when the key is unset or empty (the server never writes such a copy)
      */

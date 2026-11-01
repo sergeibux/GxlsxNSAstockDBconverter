@@ -45,11 +45,11 @@ public class Spreadsheet {
     private enum ColumnKind { TEXT, NUMBER, DATE }
 
     /**
-     * Columns written only when the row is created (reference unknown to the sheet): the identification and the
-     * characteristic of an equipment never change afterwards. Replaced by the protected.columns key if it exists.
+     * Columns written only when the row is created (reference unknown to the sheet): the identification of an
+     * equipment never changes afterwards (a new reference is a new row). Replaced by the protected.columns key
+     * if it exists. The characteristic is written: the import from the workbooks compares it with the database.
      */
-    public static final List<String> DEFAULT_PROTECTED_COLUMNS =
-            List.of("Identification", "Identification Bloc", "Type", "Type de Blocs");
+    public static final List<String> DEFAULT_PROTECTED_COLUMNS = List.of("Identification", "Identification Bloc");
 
     private CellStyle defaultDateStyle;
     private final Set<String> protectedColumns = new HashSet<>();
@@ -347,9 +347,12 @@ public class Spreadsheet {
         return defaultDateStyle;
     }
 
-    /** Comparison form of an identifier or a column title: case and whitespace (spaces, line breaks) ignored. */
+    /**
+     * Comparison form of an identifier or a column title: case and whitespace ignored, Unicode spaces included
+     * (non-breaking spaces pasted from other software), like the API does (preg_replace('/\\s+/u', …)).
+     */
     static String normalize(String value) {
-        return value.replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+        return value.replaceAll("(?U)\\s+", "").toUpperCase(Locale.ROOT);
     }
 
     /** @return index of the cell of this row whose text is the given title, -1 if none */

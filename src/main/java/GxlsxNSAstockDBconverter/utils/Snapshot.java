@@ -84,7 +84,11 @@ public final class Snapshot {
         Content content = new Content();
         content.format = FORMAT;
         content.equipment = new ArrayList<>(states.values());
-        byte[] data = GSON.toJson(content).getBytes(StandardCharsets.UTF_8);
+        writeAtomically(file, GSON.toJson(content).getBytes(StandardCharsets.UTF_8));
+    }
+
+    /** Written to a temporary file (mode 600) in the same directory, synced, then renamed over the old one. */
+    static void writeAtomically(Path file, byte[] data) throws IOException {
         Path dir = file.toAbsolutePath().getParent();
         Path tmp = Files.createTempFile(dir, file.getFileName() + ".", ".tmp",
                 PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
@@ -108,8 +112,7 @@ public final class Snapshot {
      * - reference changed (case and spaces ignored): old row marked deleted, new row with every known column;
      * - type changed: nothing written, logged;
      * - otherwise the columns whose value changed; a value that disappeared leaves its cell untouched,
-     *   a changed characteristic is not written (protected column), logged.
-     */
+         */
     public static List<Change> diff(Map<Integer, EquipmentState> snapshot, Map<Integer, EquipmentState> current) {
         List<Change> deletions = new ArrayList<>();
         List<Change> edits = new ArrayList<>();
@@ -135,16 +138,9 @@ public final class Snapshot {
                 deletions.add(deletion(before));
                 addAll(edits, now);
             } else {
-                String feature = StockDb.SHEETS.get(now.type).feature;
-                for (Map.Entry<String, String> value : now.values.entrySet()) {
-                    if (value.getValue().equals(before.values.get(value.getKey())))
-                        continue;
-                    if (value.getKey().equals(feature))
-                        Logger.WARN("Equipment \"" + now.reference + "\": characteristic changed to \""
-                                + value.getValue() + "\", not written (\"" + feature + "\" is written only on creation)");
-                    else
+                for (Map.Entry<String, String> value : now.values.entrySet())
+                    if (!value.getValue().equals(before.values.get(value.getKey())))
                         edits.add(edit(now, value.getKey(), value.getValue()));
-                }
             }
         }
         deletions.addAll(edits);

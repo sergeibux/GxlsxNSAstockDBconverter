@@ -13,7 +13,10 @@ tanks, regulators and BCDs) in line with the changes made in the NSA-app databas
    unless someone changed it on Drive meanwhile: then it is downloaded and processed again, up to 10 times
    (manual changes are never overwritten);
 4. advances the snapshot of each equipment whose changes were uploaded: a workbook that could not be updated
-   is retried at the next run.
+   is retried at the next run;
+5. with the **import** (`api.url` set): right after, the workbooks should hold the database values; what still
+   differs was changed by hand in the workbook and is written to the database **through the NSA-app API**
+   (see *Import from the workbooks*).
 
 A **test mode** applies a file of changes instead (one JSON object per line, see *Test mode*).
 
@@ -30,6 +33,8 @@ A **test mode** applies a file of changes instead (one JSON object per line, see
   real `.xlsx` files on Drive, not native Google Sheets (the tool downloads the binary file
   with `files.get(…).executeMediaAndDownloadTo`)
 - Network access to `www.googleapis.com`
+- Import only: network access to the NSA-app API, and an NSA-app account whose member type has the rights
+  `edit` and `loan` (or `all`)
 
 ## Dependencies
 
@@ -63,8 +68,14 @@ apiKey=/path/to/service-account-key.json
 db.file=/var/lib/nsa/orgs/NSA.db
 # Values of the workbooks at the last successful run (database mode, written by the tool, mode 600)
 snapshot.file=/var/lib/nsa/drive/NSA.snapshot.json
+# Import from the workbooks into the database (optional: without api.url, no import)
+api.url=https://smv-coding.fr/NSA/api
+#api.org=NSA
+api.email=account@example.org
+api.password=…
+import.state.file=/var/lib/nsa/drive/import.state.json
 # Columns written only when a row is created, ";"-separated (optional: this is the default list)
-#protected.columns=Identification;Identification Bloc;Type;Type de Blocs
+#protected.columns=Identification;Identification Bloc
 # Local tests only: copy of each workbook written before its upload (leave unset on the server)
 #debug.copy=debug.xlsx
 ```
@@ -74,10 +85,14 @@ snapshot.file=/var/lib/nsa/drive/NSA.snapshot.json
 | `fileName.blocs` | Tank inventory workbook (sheet `BLOCS`) |
 | `fileName.det_et_stabs` | Regulators / BCDs workbook (sheets `Détendeur NSA`, `Stab NSA`) |
 | `apiKey` | Path of the service account JSON key file |
-| `protected.columns` | Columns written only when the row is created (reference unknown to the sheet), `;`-separated. Absent: `Identification;Identification Bloc;Type;Type de Blocs` (defined in the code). Present but empty: no protected column |
+| `protected.columns` | Columns written only when the row is created (reference unknown to the sheet), `;`-separated. Absent: `Identification;Identification Bloc` (defined in the code). Present but empty: no protected column. With the import, a column it compares (state, characteristic, revision date, stock) is refused (exit code 1): an app change of it would never reach the workbook, and the import would undo it |
 | `debug.copy` | **Local tests only**: file where a copy of each workbook is written before its upload. Unset (the default): no copy. Never set it on the server: the copy holds the club's data |
 | `db.file` | NSA-app database of the organisation, opened **read-only** (required in database mode) |
 | `snapshot.file` | Snapshot (JSON), in a directory writable by the user of the cron (required in database mode) |
+| `api.url` | Base URL of the NSA-app API (`…/api`). Set: the import runs after each export (database mode only) |
+| `api.org` | Organisation (default `NSA`) |
+| `api.email`, `api.password` | NSA-app account used by the import (required with `api.url`): the file holds a password, keep it `640 root:www-data` |
+| `import.state.file` | State of the import (JSON, mode 600, written by the tool; required with `api.url`): device id and temporary ids for the API, session token, start of the last run, Drive version of each workbook entirely imported |
 
 The file name is matched against the **first 10 files** returned by Drive for the service
 account (if several match, the last one wins): keep the shared folder small, or the
@@ -119,7 +134,7 @@ Changes since the snapshot (deletions first):
 | Equipment deleted | identification cell marked `Supprimé de la NSA-app :` + reference (row kept) |
 | Reference changed (case and spaces ignored) | old row marked deleted, new row with every known value (columns typed by hand are not copied) |
 | Loan, return, place, status, revision, stock, member or place renamed | the columns whose value changed |
-| Characteristic changed | nothing (protected column), warning |
+| Characteristic changed | the characteristic column |
 | Type changed, or type without a sheet | nothing, warning |
 
 Several changes between two runs give one write of the final value; an equipment deleted then created again
@@ -129,6 +144,60 @@ The snapshot (`snapshot.file`) is written atomically (temporary file, then renam
 snapshot: it is only created, nothing is written. An unreadable snapshot stops the run (exit code 1): it is
 never recreated silently, as the changes not uploaded yet would be lost. Delete it by hand to start again
 from the current database.
+
+## Import from the workbooks
+
+Run after the export, in database mode, when `api.url` is set. Once the export is done, the workbooks should
+hold the database values, plus the columns the database does not have and the rows marked deleted: any
+difference left is a change made by hand. The workbooks are compared with the database **by meaning**
+(`Non conforme` and `Non disponible` are both the status *non disponible*: no difference), and the differences
+are sent to the API (`changes.php`), as a phone would do: the server checks them (columns, foreign keys,
+unique references).
+
+Which rows:
+
+- every equipment row of the `BLOCS`, `Détendeur NSA` and `Stab NSA` sheets, except the rows marked deleted
+  (`Supprimé de la NSA-app :`), the free slots (owner `Identification Libre`) and the rows without reference;
+- a reference found on several rows of a sheet, or on several equipment in the database, or on an equipment
+  of another type: not imported, warning;
+- references compared case and spaces ignored (non-breaking spaces included), imported trimmed.
+
+| In the workbook | In the database |
+|-----------------|-----------------|
+| Reference unknown to the database | equipment created (`creationTs`: now) |
+| `Etat et position au`: `En révision`, `En réparation` | status *à contrôler* (place unchanged) |
+| `Non disponible`, `Non conforme`, `Villa - Non coforme`, `Retiré sur demande` | status *non disponible* (place unchanged) |
+| `Prêt en cours à : …`, empty | nothing (loans are made in the app only) |
+| Any other text | status *disponible*, and that place (created if no place has this name) |
+| Characteristic (`Type`, `Type de Blocs`) | characteristic of the type with that text (created if none), line breaks kept; created empty: `Non renseigné` |
+| Last revision / inspection date | `lastRevisionTs` (midnight, Europe/Paris); created without a date: 0, revision due (warning) |
+| `Affectation initiale` (stabs) | stock of that name (unknown name: warning); created without one: `Milieu naturel` |
+| Owner other than `Club NSA` (`BLOCS`) | created *non disponible* in the place `Maison` (created if missing); its state cell is never imported |
+| Row removed, reference changed by hand | nothing (deleting stays in the app; a changed reference is a new equipment) |
+| Next revision, requalification, manufacturer, serial number, owner, inspector, purchase date… | nothing (no such field in the database) |
+
+Priority to the app: every row is sent with **the start of the previous run** as `lastUpdate`. The server keeps
+an equipment changed in the app since then (`skipped`, logged *kept*); the workbook is compared again at the
+next run, when the app change is in the workbook, and the change made by hand is then applied (if it was on
+another column: on the same column, the export already wrote the app value over it). A change of place
+replaces the `equipmentPlace` row, which the server does not check: it is not sent if the equipment or its
+place changed in the app since the previous run (compared again next run). A change made offline on a phone
+after the previous run, uploaded later, wins over the import.
+
+Echo: the equipment written enter the snapshot with their new database values, so they are not written back
+to the workbooks (unless the app changed them meanwhile).
+
+Drive access: a workbook without change to write is downloaded only if its Drive version differs from the one
+entirely imported; a run with nothing to write nor to import only reads the two versions and logs nothing.
+A workbook just uploaded is compared at once, and downloaded again at the next run.
+
+Refusals and errors: a change refused by the server (e.g. reference already used, 409) drops that equipment
+(and what depends on it), logged, the rest is sent again; the workbook is then compared again at every run
+until it is fixed. API unreachable or login refused: nothing more is sent, exit code 3, compared again at the
+next run. The temporary ids sent to the API are never reused (`import.state.file`, saved before each upload).
+
+First run with the import (no snapshot): every equipment of the database is written to the workbooks first,
+then the import runs; it creates in the database every equipment of the workbooks it does not have.
 
 ## Test mode: changes file
 
@@ -166,7 +235,7 @@ Rules:
 - **Reference found on several rows**, unknown column: the change is not applied and is logged.
 - **State date**: in every sheet changed during the run, the first date on the row right under the titles
   (the date of "Etat et position au") is set to the current date (Europe/Paris), its display format kept.
-- **Protected columns** (identification, characteristic: see `protected.columns`): written only on a row added
+- **Protected columns** (identification: see `protected.columns`): written only on a row added
   during the run; a change of such a column on an existing row is not applied and is logged.
 - **Value types**, deduced from the equipment rows of the column: a column holding at least one real date takes
   dates sent as `JJ/MM/AAAA` (real dates, display format kept or taken from the cell above, `D/M/YYYY` by
@@ -192,14 +261,16 @@ java -jar GxlsxNSAstockDBconverter-1.0.2.jar --changes test/changes-test.jsonl -
 ```
 
 Options in any order. Each run logs one summary line when something was written
-(`3 equipment changed, 7 cell(s); uploaded: …`); a run without changes logs nothing.
+(`3 equipment changed, 7 cell(s); uploaded: …`) and one when something was imported
+(`Import from the workbooks: 2 equipment created, 1 updated, 0 kept …, 0 refused by the server`);
+a run without changes logs nothing.
 
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | Done: every workbook concerned was uploaded, or nothing to write, or first run (snapshot created) |
-| `1` | Wrong arguments, configuration, database or snapshot unreadable, snapshot not written (the changes uploaded are applied again at the next run, which gives the same values), class loading error (`NoClassDefFoundError`) |
+| `1` | Wrong arguments, configuration, database, snapshot or import state unreadable, import state not written, snapshot not written (the changes uploaded are applied again at the next run, which gives the same values), class loading error (`NoClassDefFoundError`) |
 | `2` | Workbook not found on Drive (check `fileName.*`); the snapshot does not advance |
-| `3` | Not every workbook uploaded: Drive unreachable, download/upload error, or a workbook still changed on Drive after 10 attempts. Database mode: the snapshot advanced for the others, the rest is retried at the next run |
+| `3` | Not every workbook uploaded: Drive unreachable, download/upload error, or a workbook still changed on Drive after 10 attempts. Database mode: the snapshot advanced for the others, the rest is retried at the next run. Import: API unreachable or login refused, compared again at the next run |
 
 With `debug.copy` set (local tests only), each processed workbook is also written to that file before its
 upload; as both workbooks use the same file, it holds the last one.
@@ -225,8 +296,9 @@ sudo install -o root -g www-data -m 750 run.sh /opt/NSA/runGdrive.sh
 C=/etc/NSA/GxlsxNSAstockDB_converter.conf
 sudo sed -i '/^changes.file=/d;/^db.file=/d;/^snapshot.file=/d' $C
 printf 'db.file=/var/lib/nsa/orgs/NSA.db\nsnapshot.file=/var/lib/nsa/drive/NSA.snapshot.json\n' | sudo tee -a $C
+#    import (optional): api.url, api.email, api.password, import.state.file (see Configuration)
 sudo chgrp www-data $C && sudo chmod 640 $C        # same for the service account key (apiKey)
-# 4. first run by hand: creates the snapshot, writes nothing
+# 4. first run by hand: creates the snapshot, writes nothing (with the import: writes every equipment, then imports)
 sudo -u www-data /opt/NSA/runGdrive.sh; sudo -u www-data ls -l /var/lib/nsa/drive
 # 5. cron of www-data
 sudo crontab -u www-data -e   # */10 * * * * /opt/NSA/runGdrive.sh >> /var/log/nsa/gdrive.log 2>&1
@@ -252,6 +324,9 @@ src/main/java/GxlsxNSAstockDBconverter/
     ├── ConfigReader.java     Reads GxlsxNSAstockDB_converter.conf
     ├── StockDb.java          Reads the NSA-app database, values of each equipment in the workbooks
     ├── Snapshot.java         Snapshot file, changes since the last run, snapshot advance
+    ├── WorkbookImport.java   Import: workbook rows, differences with the database, changes sent to the API
+    ├── NsaApi.java           NSA-app API client (login, changes)
+    ├── ImportState.java      State of the import (device, temporary ids, token, last run, Drive versions)
     ├── GglApiLayer.java      Drive access (service account, 3 retries, list/download/update)
     ├── Spreadsheet.java      POI workbook wrapper, editSheet(), markDeleted()
     └── Logger.java           Console logger (colored INFO/WARN/ERROR with file:method:line)
@@ -269,6 +344,8 @@ Not versioned (`.gitignore`): configuration and keys, `tokens/`, `target/`, `out
 
 - The package is named `main.java.GxlsxNSAstockDBconverter` instead of following the Maven
   layout (`GxlsxNSAstockDBconverter`).
+- Import: a reference changed by hand in a workbook cannot be told from a new row: a new equipment is created,
+  the old one stays in the database (its next change in the app adds its row back to the workbook).
 - The Drive version is checked just before the upload: a manual change made in the very few milliseconds
   between this check and the upload would still be overwritten.
 
