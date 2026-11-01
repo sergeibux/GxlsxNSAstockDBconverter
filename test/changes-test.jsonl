@@ -18,3 +18,9 @@
   {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-01","editCol":"Etat et position au","newVal":"Non disponible"}
   {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-01","editCol":"Date de dernière inspection visuelle","newVal":"10/10/2026"}
   {"sheetName":"BLOCS","idCol":"Identification Bloc","idKey":"NSA B12-02","editCol":"Type de Blocs","newVal":"NE DOIT PAS ETRE ECRIT"}
+  ceci n'est pas une ligne JSON
+  {"op":"delete","sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-07"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-07","editCol":"Etat et position au","newVal":"Cabane"}
+  {"sheetName":"Détendeur NSA","idCol":"Identification","idKey":"NSA DET-07","editCol":"Type","newVal":"Détendeur recréé"}
+  {"sheetName":"Stab NSA","idCol":"Identification","idKey":"NSA-XXS 03","editCol":"Etat et position au","newVal":"Piscine"}
+  {"sheetName":"Stab NSA","idCol":"Identification","idKey":"NSA-XXS 03","editCol":"Etat et position au","newVal":"Prêt en cours à : Jean Test"}

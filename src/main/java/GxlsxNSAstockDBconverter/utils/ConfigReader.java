@@ -39,6 +39,18 @@ public class ConfigReader {
         return titles;
     }
 
+    /** NSA-app database of the organisation, read-only (key db.file, e.g. /var/lib/nsa/orgs/NSA.db); null if unset. */
+    public String getDbFile() {
+        String path = properties.getProperty("db.file", "").trim();
+        return path.isEmpty() ? null : path;
+    }
+
+    /** Values of the workbooks at the last successful run (key snapshot.file, mode 600); null if unset. */
+    public String getSnapshotFile() {
+        String path = properties.getProperty("snapshot.file", "").trim();
+        return path.isEmpty() ? null : path;
+    }
+
     /**
      * Local tests only: file where a copy of each workbook is written before its upload (key debug.copy).
      * @return null when the key is unset or empty (the server never writes such a copy)

@@ -2,20 +2,27 @@
 
 Command-line Java tool of the **NSA-app** ecosystem (equipment tracking for the NSA diving
 club). It keeps the club's historical **Google Drive spreadsheets** (`.xlsx` inventories of
-tanks, regulators and BCDs) in line with the changes made in the NSA database:
+tanks, regulators and BCDs) in line with the changes made in the NSA-app database. Run by cron:
 
-1. connects to Google Drive with a **service account**;
-2. downloads each inventory workbook targeted by at least one change;
-3. applies the changes read from a file (one JSON object per line);
-4. uploads the modified workbook back to Drive (same file id, new revision), unless someone changed it on
-   Drive meanwhile: then it is downloaded and processed again, up to 10 times (manual changes are never
-   overwritten); after 10 attempts the changes are left for the next run.
+1. reads the NSA-app database (`orgs/<ORG>.db` of the web site, **read-only**) and computes the values every
+   equipment has in the workbooks;
+2. compares them with the **snapshot** of the last successful run: only what changed in the app since then is
+   written (a cell corrected by hand stays as it is until the app changes that value); no change: Drive is not
+   even contacted;
+3. downloads each workbook concerned, applies the changes, and uploads it back (same file id, new revision),
+   unless someone changed it on Drive meanwhile: then it is downloaded and processed again, up to 10 times
+   (manual changes are never overwritten);
+4. advances the snapshot of each equipment whose changes were uploaded: a workbook that could not be updated
+   is retried at the next run.
+
+A **test mode** applies a file of changes instead (one JSON object per line, see *Test mode*).
 
 ---
 
 ## Requirements
 
-- **JDK 11** or newer (compiled for Java 11; runs on 17/21)
+- **JDK 11** or newer (compiled for Java 11; runs on 17/21), on **Linux x86-64** (the only SQLite native
+  library kept in the jar)
 - **Maven 3.6+** (tested with 3.9.9)
 - A **Google Cloud project** with the **Google Drive API** enabled and a **service account**
   with a JSON key
@@ -36,22 +43,26 @@ Declared in `pom.xml`:
 | `com.google.apis:google-api-services-drive` | v3-rev20251210-2.0.0 | Drive v3 client |
 | `com.google.api-client:google-api-client` | 2.8.1 | Google API client (brings `google-http-client`, `-gson`, `-apache-v2`, `google-auth-library-oauth2-http`) |
 | `com.google.oauth-client:google-oauth-client` | 1.39.0 | OAuth 2 client |
+| `org.xerial:sqlite-jdbc` | 3.53.4.0 | NSA-app database, read-only |
 
-Build plugin: `maven-shade-plugin` 3.4.1 (fat jar, main class
-`main.java.GxlsxNSAstockDBconverter.Main`).
+Build plugin: `maven-shade-plugin` 3.4.1 (single runnable jar with every dependency, main class
+`main.java.GxlsxNSAstockDBconverter.Main`; SQLite native library for Linux x86-64 only).
 
 ## Configuration
 
-`GxlsxNSAstockDB_converter.conf` (Java properties, UTF-8), read from the **working directory**:
+`GxlsxNSAstockDB_converter.conf` (Java properties, UTF-8), path given with `--conf`
+(`/etc/NSA/GxlsxNSAstockDB_converter.conf` for `run.sh`):
 
 ```properties
 # Part of the Drive file names to look for (case-insensitive "contains")
 fileName.blocs=Liste de blocs
 fileName.det_et_stabs=Liste des Détendeurs et Stab du NSA
-# Path to the service account JSON key (relative to the working directory or absolute)
+# Path to the service account JSON key (absolute, or relative to the working directory)
 apiKey=/path/to/service-account-key.json
-# Changes file processed by run.sh (optional, read by run.sh only)
-changes.file=/opt/NSA/changes.jsonl
+# NSA-app database, read-only (database mode)
+db.file=/var/lib/nsa/orgs/NSA.db
+# Values of the workbooks at the last successful run (database mode, written by the tool, mode 600)
+snapshot.file=/var/lib/nsa/drive/NSA.snapshot.json
 # Columns written only when a row is created, ";"-separated (optional: this is the default list)
 #protected.columns=Identification;Identification Bloc;Type;Type de Blocs
 # Local tests only: copy of each workbook written before its upload (leave unset on the server)
@@ -65,7 +76,8 @@ changes.file=/opt/NSA/changes.jsonl
 | `apiKey` | Path of the service account JSON key file |
 | `protected.columns` | Columns written only when the row is created (reference unknown to the sheet), `;`-separated. Absent: `Identification;Identification Bloc;Type;Type de Blocs` (defined in the code). Present but empty: no protected column |
 | `debug.copy` | **Local tests only**: file where a copy of each workbook is written before its upload. Unset (the default): no copy. Never set it on the server: the copy holds the club's data |
-| `changes.file` | Changes file processed by `run.sh` (default `/opt/NSA/changes.jsonl`); `run.sh` reads it from `/etc/NSA/GxlsxNSAstockDB_converter.conf` |
+| `db.file` | NSA-app database of the organisation, opened **read-only** (required in database mode) |
+| `snapshot.file` | Snapshot (JSON), in a directory writable by the user of the cron (required in database mode) |
 
 The file name is matched against the **first 10 files** returned by Drive for the service
 account (if several match, the last one wins): keep the shared folder small, or the
@@ -82,9 +94,47 @@ The configuration file and the service account key are **not versioned** (see
    (`…@….iam.gserviceaccount.com`), role *Editor*.
 4. Put the key path in `apiKey=`.
 
-## Input file
+## Database mode
 
-One JSON object per line. A cell change:
+Values computed for each equipment (sheet chosen by the type of the app):
+
+| App type | Sheet | Identification column | Characteristic column | Revision columns | Stock column |
+|----------|-------|-----------------------|-----------------------|------------------|--------------|
+| `Bloc` | `BLOCS` | `Identification Bloc` | `Type de Blocs` | `Date de dernière inspection visuelle` | – |
+| `Détendeur` | `Détendeur NSA` | `Identification` | `Type` | `Date de dernière révision`, `Date de prochaine révision` | – |
+| `STAB` | `Stab NSA` | `Identification` | `Type` | `Date de dernière révision`, `Date de prochaine révision` | `Affectation initiale` |
+
+- `Etat et position au`: `Prêt en cours à : <first name> <last name>` during a loan, else `En révision`
+  (status *à contrôler*), `Non disponible` (status *non disponible*), else the name of its place.
+- Revision dates: last revision, and last revision + revision interval of the type (`JJ/MM/AAAA`,
+  Europe/Paris). Requalification columns are never written, nor the columns typed by hand (owner,
+  manufacturer, serial number, inspector, status, purchase date…).
+- A value the database does not have (no place, no revision date) is never written: the cell stays as it is.
+
+Changes since the snapshot (deletions first):
+
+| In the app | In the workbook |
+|------------|-----------------|
+| New equipment | new row with every known value |
+| Equipment deleted | identification cell marked `Supprimé de la NSA-app :` + reference (row kept) |
+| Reference changed (case and spaces ignored) | old row marked deleted, new row with every known value (columns typed by hand are not copied) |
+| Loan, return, place, status, revision, stock, member or place renamed | the columns whose value changed |
+| Characteristic changed | nothing (protected column), warning |
+| Type changed, or type without a sheet | nothing, warning |
+
+Several changes between two runs give one write of the final value; an equipment deleted then created again
+in the app (new id) gives a marked row then a new one.
+
+The snapshot (`snapshot.file`) is written atomically (temporary file, then rename). First run, without a
+snapshot: it is only created, nothing is written. An unreadable snapshot stops the run (exit code 1): it is
+never recreated silently, as the changes not uploaded yet would be lost. Delete it by hand to start again
+from the current database.
+
+## Test mode: changes file
+
+`--changes <file.jsonl>`: no database nor snapshot; the lines are applied **in their order** (a value changed
+twice keeps the last one; a deletion then a creation of the same reference marks the row then adds a new one).
+This is also the internal format of the database mode. One JSON object per line. A cell change:
 
 ```json
 {"sheetName":"Détendeur NSA", "idCol":"Identification", "idKey":"NSA DET-01", "editCol":"Etat et position au", "newVal":"Piscine"}
@@ -129,44 +179,61 @@ Lines with missing fields are skipped with a warning showing the expected format
 
 ```bash
 mvn package
-# -> target/GxlsxNSAstockDBconverter-1.0-SNAPSHOT.jar (shaded, runnable)
+# -> target/GxlsxNSAstockDBconverter-1.0.1.jar (shaded, runnable, ~29 MB)
 ```
+
+Use this jar: the IntelliJ artifact does not contain the Google and SQLite libraries (`NoClassDefFoundError`).
 
 ## Run
 
-From the directory that holds `GxlsxNSAstockDB_converter.conf`:
-
 ```bash
-java -jar target/GxlsxNSAstockDBconverter-1.0-SNAPSHOT.jar /path/to/changes.jsonl
+java -jar GxlsxNSAstockDBconverter-1.0.1.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
+java -jar GxlsxNSAstockDBconverter-1.0.1.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
 ```
 
-Exactly one argument is required (the change file).
+Options in any order. Each run logs one summary line when something was written
+(`3 equipment changed, 7 cell(s); uploaded: …`); a run without changes logs nothing.
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | Every workbook concerned by the changes was uploaded (or no change concerned it) |
-| `1` | Wrong number of arguments, or class loading error (`NoClassDefFoundError`) |
-| `2` | Workbook not found on Drive (check `fileName.*`) |
-| `3` | Changes not (all) uploaded: Drive unreachable, download/upload error, or a workbook still changed on Drive after 10 attempts. Run again later with the same file (applying a change twice gives the same result) |
+| `0` | Done: every workbook concerned was uploaded, or nothing to write, or first run (snapshot created) |
+| `1` | Wrong arguments, configuration, database or snapshot unreadable, snapshot not written (the changes uploaded are applied again at the next run, which gives the same values), class loading error (`NoClassDefFoundError`) |
+| `2` | Workbook not found on Drive (check `fileName.*`); the snapshot does not advance |
+| `3` | Not every workbook uploaded: Drive unreachable, download/upload error, or a workbook still changed on Drive after 10 attempts. Database mode: the snapshot advanced for the others, the rest is retried at the next run |
 
 With `debug.copy` set (local tests only), each processed workbook is also written to that file before its
 upload; as both workbooks use the same file, it holds the last one.
 
 ### Helper script
 
-`run.sh` processes the changes file (`changes.file`, default `/opt/NSA/changes.jsonl`), for cron:
+`run.sh`, for cron: runs the jar (`/opt/NSA/GxlsxNSAstockDBconverter-1.0.1.jar`) in database mode with
+`/etc/NSA/GxlsxNSAstockDB_converter.conf`, from its own directory (relative paths of the configuration).
+
+- Only one run at a time (lock `/var/lib/nsa/drive/converter.lock`): a run started while another is in
+  progress logs `previous run still in progress: skipped` and stops (a line every 10 minutes reveals a stuck run).
+- A non-zero exit code of the converter is logged and returned; nothing else to do, the next run catches up.
+
+### Deployment (server)
 
 ```bash
-./run.sh            # run the existing jar
-./run.sh compile    # mvn package, then run
+# 1. directory of the snapshot and of the lock, for the cron user only
+sudo install -d -o www-data -g www-data -m 700 /var/lib/nsa/drive
+# 2. jar and script (built with mvn package)
+sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.1.jar /opt/NSA/
+sudo install -o root -g www-data -m 750 run.sh /opt/NSA/runGdrive.sh
+# 3. configuration: db.file and snapshot.file (changes.file is no longer used); key and conf readable by www-data
+C=/etc/NSA/GxlsxNSAstockDB_converter.conf
+sudo sed -i '/^changes.file=/d;/^db.file=/d;/^snapshot.file=/d' $C
+printf 'db.file=/var/lib/nsa/orgs/NSA.db\nsnapshot.file=/var/lib/nsa/drive/NSA.snapshot.json\n' | sudo tee -a $C
+sudo chgrp www-data $C && sudo chmod 640 $C        # same for the service account key (apiKey)
+# 4. first run by hand: creates the snapshot, writes nothing
+sudo -u www-data /opt/NSA/runGdrive.sh; sudo -u www-data ls -l /var/lib/nsa/drive
+# 5. cron of www-data
+sudo crontab -u www-data -e   # */10 * * * * /opt/NSA/runGdrive.sh >> /var/log/nsa/gdrive.log 2>&1
 ```
 
-- The file is renamed before being read: changes written by the server during the run go to a new file.
-  A writer must hold an exclusive lock on `<changes file>.lock` while appending (`flock`).
-- Exit code `0`: the processed changes are deleted. Any other code: they are kept in
-  `<changes file>.processing` and replayed first at the next run, before the newer ones.
-- Only one run at a time (lock `<changes file>.run.lock`): a run started while another is in progress
-  stops immediately.
+The workbooks are only changed for what changes in the app **after** the first run: align them by hand
+beforehand if needed.
 
 ### Build without Maven (IntelliJ)
 
@@ -179,16 +246,19 @@ need that workflow. Maven is the reference build.
 
 ```
 src/main/java/GxlsxNSAstockDBconverter/
-├── Main.java                 Entry point: config, download, apply changes, upload
+├── Main.java                 Entry point: arguments, database or test mode, download, apply, upload
 ├── Viewer.java               Debug display of a sheet
 └── utils/
     ├── ConfigReader.java     Reads GxlsxNSAstockDB_converter.conf
+    ├── StockDb.java          Reads the NSA-app database, values of each equipment in the workbooks
+    ├── Snapshot.java         Snapshot file, changes since the last run, snapshot advance
     ├── GglApiLayer.java      Drive access (service account, 3 retries, list/download/update)
-    ├── Spreadsheet.java      POI workbook wrapper, editSheet()
+    ├── Spreadsheet.java      POI workbook wrapper, editSheet(), markDeleted()
     └── Logger.java           Console logger (colored INFO/WARN/ERROR with file:method:line)
 src/META-INF/MANIFEST.MF      Main class for the IntelliJ artifact
 test/TestPOI.java             Manual POI check (not a unit test, does not compile as is)
-run.sh                        Helper script
+test/changes-test.jsonl, .md  Test mode file covering every rule, with the expected results
+run.sh                        Script run by cron
 out.lib                       Classpath command line for the non-Maven build
 ```
 
@@ -197,7 +267,6 @@ Not versioned (`.gitignore`): configuration and keys, `tokens/`, `target/`, `out
 
 ## Known limitations
 
-- `pom.xml` declares `maven-shade-plugin` twice (only the second one sets the main class).
 - The package is named `main.java.GxlsxNSAstockDBconverter` instead of following the Maven
   layout (`GxlsxNSAstockDBconverter`).
 - The Drive version is checked just before the upload: a manual change made in the very few milliseconds

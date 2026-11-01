@@ -1,14 +1,16 @@
 # Test changes file
 
-`changes-test.jsonl` exercises every rule of the converter on the **copies** of the workbooks
+`changes-test.jsonl` exercises every rule of the converter (test mode, lines applied in their order) on the
+**copies** of the workbooks
 ("Copie de Liste de blocs V6", "Copie de Liste des Détendeurs et Stab du NSA"). Never run it against the
 real workbooks: it changes their content.
 
 ```bash
-java -jar target/GxlsxNSAstockDBconverter-*.jar test/changes-test.jsonl
-# or through run.sh: copy it to the changes file first
-cp test/changes-test.jsonl /opt/NSA/changes.jsonl && ./run.sh
+java -jar target/GxlsxNSAstockDBconverter-1.0.1.jar --changes test/changes-test.jsonl --conf GxlsxNSAstockDB_converter.conf
 ```
+
+The configuration must target the copies (`fileName.*`); the test mode reads neither the database nor the
+snapshot.
 
 Expected result (exit code 0):
 
@@ -29,6 +31,8 @@ Expected result (exit code 0):
 | 18-19 | NSA B12-01 › Etat = Non disponible, Date de dernière inspection visuelle | written, real date |
 | 20 | NSA B12-02 › Type de Blocs | **not written** (protected column), warning |
 | 21 | not JSON | skipped, the expected format is printed |
+| 22-24 | delete NSA DET-07, then the same reference again | row marked, then a **new row** (state, and type allowed on it) |
+| 25-26 | NSA-XXS 03 › Etat twice | the last value: `Prêt en cours à : Jean Test` |
 
 Also: the date under "Etat et position au" of the three sheets (Détendeur NSA, Stab NSA, BLOCS) is set to the
 day of the run; the other sheets are untouched.
