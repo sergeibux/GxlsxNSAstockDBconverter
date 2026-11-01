@@ -1,5 +1,7 @@
 package main.java.GxlsxNSAstockDBconverter.utils;
 
+import smv_logger.src.Logger.Logger;
+
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.http.HttpTransport;
 import com.google.api.client.http.InputStreamContent;
@@ -24,14 +26,13 @@ import java.util.Collections;
 import static java.lang.System.exit;
 
 public class GglApiLayer {
+    private static final Logger LOGGER = Logger.getInstance();
     private String fileId;
     private String fileName;
     /** Drive version of the file when it was downloaded: any change on Drive increases it. */
     private Long downloadedVersion;
     private final String serviceAccountKey;
     private static final int MAX_RETRIES = 3;
-    /** No INFO lines for a check that finds nothing to do (the cron runs often: the log stays readable). */
-    private boolean quiet;
 
     public GglApiLayer(String fileName, String serviceAccountKey) {
         this.fileId = null;
@@ -48,11 +49,9 @@ public class GglApiLayer {
                         .setPageSize(10)
                         .setFields("nextPageToken, files(id, name)")
                         .execute();
-                if (!quiet)
-                    Logger.LOG("✅ Connection OK. " + result.getFiles().size() + " files found:");
+                LOGGER.LOG("✅ Connection OK. " + result.getFiles().size() + " files found:", Logger.LEVEL.DEBUG);
                 for (File f : result.getFiles()) {
-                    if (!quiet)
-                        Logger.LOG("\t-File->\t" + f.getId() + "(" + f.getName() + ")");
+                    LOGGER.LOG("\t-File->\t" + f.getId() + "(" + f.getName() + ")", Logger.LEVEL.DEBUG);
                     if (f.getName().toUpperCase().contains(fileName.toUpperCase())) {
                         this.fileName = f.getName();
                         this.fileId = f.getId();
@@ -61,13 +60,12 @@ public class GglApiLayer {
                 return true;
             } catch (GoogleJsonResponseException e) {
                 int code = e.getStatusCode();
-                Logger.ERROR_printMsg("HTTP code: " + code, e.getMessage());
+                LOGGER.LOG("HTTP code: " + code, e, Logger.LEVEL.ERROR);
                 if (code == 401 || code == 403) return false;
                 retryCount++;
             } catch (IOException | GeneralSecurityException e) {
                 // e.g. "<key file> (Permission denied)": the cause must appear in the log, the stack trace does not tell it
-                Logger.ERROR_printMsg("Cannot connect to Google Drive. Retry (" + (retryCount + 1) + "/" + MAX_RETRIES + ").",
-                        e.getClass().getSimpleName() + ": " + e.getMessage());
+                LOGGER.LOG("Cannot connect to Google Drive. Retry (" + (retryCount + 1) + "/" + MAX_RETRIES + ").", e, Logger.LEVEL.ERROR);
                 retryCount++;
             } catch (NoClassDefFoundError e) {
                 try {
@@ -78,16 +76,15 @@ public class GglApiLayer {
                                 ? Class.forName(className, false, cl)
                                 : Class.forName(className);
 
-                        Logger.ERROR_printStacktrace(
+                        LOGGER.LOG(
                                 "----BEGIN----"
                                 + "\nclass : (" + className + ") from: " + clazz.getProtectionDomain().getCodeSource().getLocation()
                                 + "\nError: " + e.getMessage()
-                                + "\nStack trace: ",
-                                e.getStackTrace());
+                                + "\nStack trace: ", e, Logger.LEVEL.ERROR);
                         exit(1);
                     }
                 } catch (Exception e1) {
-                    Logger.ERROR_printStacktrace("Exception in exception", e.getStackTrace());
+                    LOGGER.LOG("Exception in exception", e, Logger.LEVEL.ERROR);
                     exit(1);
                 }
             }
@@ -112,7 +109,7 @@ public class GglApiLayer {
 
                 ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
                 if (fileId == null) {
-                    Logger.ERROR_printStacktrace("file not found (" + fileName + ") on the specified GDrive. Please check configuration file.", null);
+                    LOGGER.LOG("file not found (" + fileName + ") on the specified GDrive. Please check configuration file.", Logger.LEVEL.ERROR);
                     exit (2);
                 }
 
@@ -120,7 +117,7 @@ public class GglApiLayer {
                 Long before = currentVersion(service);
                 service.files().get(fileId).executeMediaAndDownloadTo(outputStream);
                 if (!before.equals(currentVersion(service))) {
-                    Logger.WARN(fileName + " changed on Drive during the download: downloading again");
+                    LOGGER.LOG(fileName + " changed on Drive during the download: downloading again", Logger.LEVEL.WARN);
                     retryCount++;
                     continue;
                 }
@@ -133,11 +130,11 @@ public class GglApiLayer {
                 return new Spreadsheet(fileName, outputStream);
             } catch (GoogleJsonResponseException e) {
                 int code = e.getStatusCode();
-                Logger.ERROR_printMsg("HTTP (code " + code + ").", e.getMessage());
+                LOGGER.LOG("HTTP (code " + code + ").", e, Logger.LEVEL.ERROR);
                 if (code == 401 || code == 403) throw e;
                 retryCount++;
             } catch (IOException | GeneralSecurityException e) {
-                Logger.ERROR_printMsg("IO error. Retry (" + (retryCount + 1) + "/" + MAX_RETRIES + ").", e.getMessage());
+                LOGGER.LOG("IO error. Retry (" + (retryCount + 1) + "/" + MAX_RETRIES + ").", e, Logger.LEVEL.ERROR);
                 retryCount++;
             }
             try { Thread.sleep(2000); } catch (InterruptedException ie) {
@@ -145,10 +142,6 @@ public class GglApiLayer {
             }
         }
         throw new IOException("Fail after " + MAX_RETRIES + " tries");
-    }
-
-    public void setQuiet(boolean quiet) {
-        this.quiet = quiet;
     }
 
     /** @return Drive version of the file now (after checkConnection), null if the file was not found */
@@ -171,7 +164,7 @@ public class GglApiLayer {
     }
 
     public void uploadFile(ByteArrayOutputStream spreadsheet) throws IOException, GeneralSecurityException {
-        Logger.LOG("Upload file");
+        LOGGER.LOG("Upload file", Logger.LEVEL.INFO);
 
         Drive driveService = getDriveService();
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(spreadsheet.toByteArray());
@@ -217,7 +210,7 @@ public class GglApiLayer {
 //        try { Thread.sleep(2000); } catch (InterruptedException ie) {
 //            throw new IOException("Téléchargement interrompu", ie);
 //        }
-        Logger.LOG("File with ID: " + fileId + " updated");
+        LOGGER.LOG("File with ID: " + fileId + " updated", Logger.LEVEL.INFO);
     }
 
     private Drive getDriveService() throws IOException, GeneralSecurityException {

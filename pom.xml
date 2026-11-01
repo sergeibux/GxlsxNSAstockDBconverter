@@ -5,7 +5,7 @@
 
     <groupId>com.example</groupId>
     <artifactId>GxlsxNSAstockDBconverter</artifactId>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
@@ -51,6 +51,11 @@
             <version>1.39.0</version>
         </dependency>
         <!-- NSA-app database (orgs/<ORG>.db), read-only -->
+        <dependency>
+            <groupId>smv</groupId>
+            <artifactId>smv_logger</artifactId>
+            <version>1.1.0</version>
+        </dependency>
         <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>

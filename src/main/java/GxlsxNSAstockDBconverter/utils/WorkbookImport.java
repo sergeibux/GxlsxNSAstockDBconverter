@@ -1,5 +1,7 @@
 package main.java.GxlsxNSAstockDBconverter.utils;
 
+import smv_logger.src.Logger.Logger;
+
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -45,6 +47,7 @@ import java.util.Set;
  * any row changed in the app since then ("skipped", imported at the next run if still different).
  */
 public final class WorkbookImport {
+    private static final Logger LOGGER = Logger.getInstance();
 
     static final String OWNER_COLUMN = "Propriétaire";
     static final String CLUB_OWNER = "Club NSA";
@@ -216,7 +219,7 @@ public final class WorkbookImport {
             }
         }
         if (header == null) {
-            Logger.ERROR("Column \"" + columns.idCol + "\" not found in sheet " + sheet.getSheetName() + ": not imported");
+            LOGGER.LOG("Column \"" + columns.idCol + "\" not found in sheet " + sheet.getSheetName() + ": not imported", Logger.LEVEL.ERROR);
             return rows;
         }
         int stateCol = column(header, StockDb.STATE_COLUMN);
@@ -255,8 +258,8 @@ public final class WorkbookImport {
         rows.removeIf(line -> {
             int count = seen.get(Spreadsheet.normalize(line.reference));
             if (count > 1)
-                Logger.WARN("\"" + line.reference + "\" found on " + count + " rows of sheet " + line.sheet
-                        + " (row " + line.rowNum + "): not imported");
+                LOGGER.LOG("\"" + line.reference + "\" found on " + count + " rows of sheet " + line.sheet
+                        + " (row " + line.rowNum + "): not imported", Logger.LEVEL.WARN);
             return count > 1;
         });
         return rows;
@@ -365,7 +368,7 @@ public final class WorkbookImport {
             for (SheetRow row : rows) {
                 Integer type = db.typeIds.get(row.type);
                 if (type == null) {
-                    Logger.WARN("Type \"" + row.type + "\" not in the database: \"" + row.reference + "\" not imported");
+                    LOGGER.LOG("Type \"" + row.type + "\" not in the database: \"" + row.reference + "\" not imported", Logger.LEVEL.WARN);
                     continue;
                 }
                 List<Equipment> known = byReference.get(Spreadsheet.normalize(row.reference));
@@ -373,11 +376,11 @@ public final class WorkbookImport {
                 if (known == null)
                     group = create(row, type);
                 else if (known.size() > 1) {
-                    Logger.WARN("\"" + row.reference + "\" is " + known.size() + " equipment in the database: not imported");
+                    LOGGER.LOG("\"" + row.reference + "\" is " + known.size() + " equipment in the database: not imported", Logger.LEVEL.WARN);
                     continue;
                 } else if (known.get(0).type != type) {
-                    Logger.WARN("\"" + row.reference + "\" (sheet " + row.sheet + ") is another type of equipment in"
-                            + " the database: not imported");
+                    LOGGER.LOG("\"" + row.reference + "\" (sheet " + row.sheet + ") is another type of equipment in"
+                            + " the database: not imported", Logger.LEVEL.WARN);
                     continue;
                 } else
                     group = update(row, known.get(0));
@@ -408,20 +411,20 @@ public final class WorkbookImport {
             }
             Integer stock = row.stock == null ? null : stockId(row.stock);
             if (row.stock != null && stock == null)
-                Logger.WARN("\"" + row.reference + "\": unknown stock \"" + row.stock + "\", " + DEFAULT_STOCK + " used");
+                LOGGER.LOG("\"" + row.reference + "\": unknown stock \"" + row.stock + "\", " + DEFAULT_STOCK + " used", Logger.LEVEL.WARN);
             if (stock == null)
                 stock = stockId(DEFAULT_STOCK);
             if (stock == null) {
-                Logger.ERROR("Stock \"" + DEFAULT_STOCK + "\" not in the database: \"" + row.reference + "\" not imported");
+                LOGGER.LOG("Stock \"" + DEFAULT_STOCK + "\" not in the database: \"" + row.reference + "\" not imported", Logger.LEVEL.ERROR);
                 return null;
             }
             long revision = 0;
             if (row.lastRevision != null)
                 revision = midnight(row.lastRevision);
             else
-                Logger.WARN("\"" + row.reference + "\": no revision date"
+                LOGGER.LOG("\"" + row.reference + "\": no revision date"
                         + (row.lastRevisionText == null ? "" : " (\"" + row.lastRevisionText + "\")")
-                        + ", created with revision due (not lendable until a date is entered)");
+                        + ", created with revision due (not lendable until a date is entered)", Logger.LEVEL.WARN);
 
             JsonObject values = new JsonObject();
             values.addProperty("reference", row.reference);
@@ -455,7 +458,7 @@ public final class WorkbookImport {
             if (row.stock != null) {
                 Integer stock = stockId(row.stock);
                 if (stock == null)
-                    Logger.WARN("\"" + e.reference + "\": unknown stock \"" + row.stock + "\", not imported");
+                    LOGGER.LOG("\"" + e.reference + "\": unknown stock \"" + row.stock + "\", not imported", Logger.LEVEL.WARN);
                 else if (stock != e.stock)
                     values.addProperty("stock", stock);
             }
@@ -470,8 +473,8 @@ public final class WorkbookImport {
                         // equipmentPlace is replaced (delete + insert), which the server does not check against
                         // lastUpdate: not done if the app changed the equipment or its place since the last run
                         if (e.lastUpdate >= lastUpdate || e.placeLastUpdate >= lastUpdate) {
-                            Logger.LOG("\"" + e.reference + "\": place \"" + s.place + "\" not imported, the"
-                                    + " equipment was changed in the app since the last run (compared again next run)");
+                            LOGGER.LOG("\"" + e.reference + "\": place \"" + s.place + "\" not imported, the"
+                                    + " equipment was changed in the app since the last run (compared again next run)", Logger.LEVEL.INFO);
                             plan.deferred = true;
                         } else {
                             newPlace = placeId(s.place, group);
@@ -499,7 +502,7 @@ public final class WorkbookImport {
                 changed.remove("status");           // sent unchanged with the place
                 changed.add("place");
             }
-            Logger.LOG(group.label + ": changed in the workbook: " + changed);
+            LOGGER.LOG(group.label + ": changed in the workbook: " + changed, Logger.LEVEL.INFO);
             plan.updated++;
             return group;
         }
@@ -654,8 +657,7 @@ public final class WorkbookImport {
                 try {
                     response = api.sendChanges(changes);
                 } catch (IOException e) {
-                    Logger.ERROR_printMsg("Import: upload to the NSA-app API failed (compared again next run)",
-                            e.getMessage());
+                    LOGGER.LOG("Import: upload to the NSA-app API failed (compared again next run)", e, Logger.LEVEL.ERROR);
                     result.failed = true;
                     return result;
                 } catch (InterruptedException e) {
@@ -670,13 +672,13 @@ public final class WorkbookImport {
                 int index = response.refusedIndex();
                 boolean dataError = response.code == 400 || response.code == 404 || response.code == 409;
                 if (!dataError || index < 0 || index >= owners.size()) {
-                    Logger.ERROR("Import: the NSA-app API refused the upload (" + response.error()
-                            + "), compared again next run");
+                    LOGGER.LOG("Import: the NSA-app API refused the upload (" + response.error()
+                            + "), compared again next run", Logger.LEVEL.ERROR);
                     result.failed = true;
                     return result;
                 }
                 Group refused = owners.get(index);
-                Logger.WARN("Import: " + refused.label + " refused by the server: " + response.error());
+                LOGGER.LOG("Import: " + refused.label + " refused by the server: " + response.error(), Logger.LEVEL.WARN);
                 result.refused++;
                 result.complete = false;
                 dropped.addAll(refused.creates);
@@ -684,7 +686,7 @@ public final class WorkbookImport {
                 batch.removeIf(g -> {
                     boolean d = dropped(g, dropped);
                     if (d)
-                        Logger.WARN("Import: " + g.label + " not sent (it needs what was refused)");
+                        LOGGER.LOG("Import: " + g.label + " not sent (it needs what was refused)", Logger.LEVEL.WARN);
                     return d;
                 });
             }
@@ -717,7 +719,7 @@ public final class WorkbookImport {
             String status = r.get("status").getAsString();
             if (g.equipmentId != null && offsets[i] == 0) {          // the equipment update is the group's first change
                 if ("skipped".equals(status)) {
-                    Logger.LOG("Import: " + g.label + " kept, changed in the app since the last run (compared again next run)");
+                    LOGGER.LOG("Import: " + g.label + " kept, changed in the app since the last run (compared again next run)", Logger.LEVEL.INFO);
                     result.kept++;
                     result.complete = false;
                 } else {
@@ -727,7 +729,7 @@ public final class WorkbookImport {
             } else if (g.equipmentInsert == offsets[i] && counted.add(g)) {
                 result.created++;
                 result.touched.put(r.get("id").getAsInt(), lastUpdate);
-                Logger.LOG("Import: " + g.label + " created (#" + r.get("id").getAsInt() + ")");
+                LOGGER.LOG("Import: " + g.label + " created (#" + r.get("id").getAsInt() + ")", Logger.LEVEL.INFO);
             }
         }
     }

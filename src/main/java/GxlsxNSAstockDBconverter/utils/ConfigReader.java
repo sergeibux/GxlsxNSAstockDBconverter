@@ -79,6 +79,11 @@ public class ConfigReader {
         return value("import.state.file");
     }
 
+    /** Log level (key log.level), null if unset (INFO). */
+    public String getLogLevel() {
+        return value("log.level");
+    }
+
     private String value(String key) {
         String value = properties.getProperty(key, "").trim();
         return value.isEmpty() ? null : value;

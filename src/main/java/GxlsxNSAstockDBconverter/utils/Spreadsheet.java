@@ -1,5 +1,7 @@
 package main.java.GxlsxNSAstockDBconverter.utils;
 
+import smv_logger.src.Logger.Logger;
+
 import main.java.GxlsxNSAstockDBconverter.Viewer;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
 import org.apache.poi.ss.usermodel.Cell;
@@ -30,6 +32,7 @@ import java.util.Map;
 import java.util.Set;
 
 public class Spreadsheet {
+    private static final Logger LOGGER = Logger.getInstance();
     /** Cell text as displayed in the spreadsheet (numbers and dates included). */
     private static final DataFormatter FORMATTER = new DataFormatter();
     /** Dates sent in the changes file: JJ/MM/AAAA (leading zeros optional), impossible dates refused. */
@@ -72,10 +75,10 @@ public class Spreadsheet {
 
             try {
                 Class<?> zipArchiveInputStreamClass = Class.forName("org.apache.commons.compress.archivers.zip.ZipArchiveInputStream");
-                Logger.LOG("ZipArchiveInputStream loaded from: " +
-                        zipArchiveInputStreamClass.getProtectionDomain().getCodeSource().getLocation());
+                LOGGER.LOG("ZipArchiveInputStream loaded from: " +
+                        zipArchiveInputStreamClass.getProtectionDomain().getCodeSource().getLocation(), Logger.LEVEL.DEBUG);
             } catch (ClassNotFoundException e) {
-                Logger.ERROR_printMsg("ZipArchiveInputStream not found.", e.getMessage());
+                LOGGER.LOG("ZipArchiveInputStream not found.", e, Logger.LEVEL.ERROR);
             }
             workbook = new XSSFWorkbook(inputStream);
         } else if (fileName.endsWith(".xls")) {
@@ -115,14 +118,14 @@ public class Spreadsheet {
     public void markDeleted(String sheetName, String idColName, String id) {
         Sheet sheet = workbook.getSheet(sheetName);
         if (sheet == null) {
-            Logger.ERROR("Cannot find sheet name:" + sheetName);
+            LOGGER.LOG("Cannot find sheet name:" + sheetName, Logger.LEVEL.ERROR);
             return;
         }
         RowMatch match = findRow(sheet, idColName, id);
         if (match == null)
             return;
         if (match.target == null) {
-            Logger.WARN("\"" + id + "\" not found in sheet " + sheetName + ": nothing to mark");
+            LOGGER.LOG("\"" + id + "\" not found in sheet " + sheetName + ": nothing to mark", Logger.LEVEL.WARN);
             return;
         }
         Cell cell = match.target.getCell(match.idCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
@@ -132,7 +135,7 @@ public class Spreadsheet {
         wrapped.setWrapText(true);
         cell.setCellValue(DELETED_MARK + "\n" + reference);
         cell.setCellStyle(wrapped);
-        Logger.LOG("\"" + reference + "\" marked as deleted on row " + (match.target.getRowNum() + 1));
+        LOGGER.LOG("\"" + reference + "\" marked as deleted on row " + (match.target.getRowNum() + 1), Logger.LEVEL.INFO);
         changedSheets.put(sheetName, match.header.getRowNum());
         rewrite();
     }
@@ -156,7 +159,7 @@ public class Spreadsheet {
             }
         }
         if (match.header == null) {
-            Logger.ERROR("Column \"" + idColName + "\" not found in sheet " + sheet.getSheetName() + ": change not applied");
+            LOGGER.LOG("Column \"" + idColName + "\" not found in sheet " + sheet.getSheetName() + ": change not applied", Logger.LEVEL.ERROR);
             return null;
         }
 
@@ -175,7 +178,7 @@ public class Spreadsheet {
             }
         }
         if (matches > 1) {
-            Logger.ERROR("\"" + id + "\" found on " + matches + " rows of sheet " + sheet.getSheetName() + ": change not applied");
+            LOGGER.LOG("\"" + id + "\" found on " + matches + " rows of sheet " + sheet.getSheetName() + ": change not applied", Logger.LEVEL.ERROR);
             return null;
         }
         return match;
@@ -184,10 +187,10 @@ public class Spreadsheet {
     private void applyEdit(String sheetName, String idColName, String id, String editColName, String newValue) {
         Sheet sheet = workbook.getSheet(sheetName);
         if (sheet == null) {
-            Logger.ERROR("Cannot find sheet name:" + sheetName);
+            LOGGER.LOG("Cannot find sheet name:" + sheetName, Logger.LEVEL.ERROR);
             return;
         }
-        Logger.LOG("looking for \"" + id + "\" in \"" + idColName + "\" to be replaced by: " + newValue);
+        LOGGER.LOG("looking for \"" + id + "\" in \"" + idColName + "\" to be replaced by: " + newValue, Logger.LEVEL.DEBUG);
 
         RowMatch match = findRow(sheet, idColName, id);
         if (match == null)
@@ -196,7 +199,7 @@ public class Spreadsheet {
         int idCol = match.idCol;
         int editCol = findColumn(header, editColName);
         if (editCol < 0) {
-            Logger.ERROR("Column \"" + editColName + "\" not found in sheet " + sheetName + ": change not applied");
+            LOGGER.LOG("Column \"" + editColName + "\" not found in sheet " + sheetName + ": change not applied", Logger.LEVEL.ERROR);
             return;
         }
 
@@ -207,14 +210,14 @@ public class Spreadsheet {
             target = appendRow(sheet, match.lastFilledRow);
             target.getCell(idCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK).setCellValue(id);
             createdRows.add(rowKey);
-            Logger.LOG("\"" + id + "\" not found: added on row " + (target.getRowNum() + 1));
+            LOGGER.LOG("\"" + id + "\" not found: added on row " + (target.getRowNum() + 1), Logger.LEVEL.INFO);
         } else if (protectedColumns.contains(normalize(editColName)) && !createdRows.contains(rowKey)) {
-            Logger.WARN("Column \"" + editColName + "\" of \"" + id + "\" is only written when the row is created: change not applied");
+            LOGGER.LOG("Column \"" + editColName + "\" of \"" + id + "\" is only written when the row is created: change not applied", Logger.LEVEL.WARN);
             return;
         }
 
         Cell cell = target.getCell(editCol, Row.MissingCellPolicy.CREATE_NULL_AS_BLANK);
-        Logger.LOG("Change value " + FORMATTER.formatCellValue(cell) + " to " + newValue);
+        LOGGER.LOG("Change value " + FORMATTER.formatCellValue(cell) + " to " + newValue, Logger.LEVEL.DEBUG);
         writeValue(sheet, cell, columnKind(sheet, editCol, idCol, header.getRowNum()), newValue);
         changedSheets.put(sheetName, header.getRowNum());
         rewrite();
@@ -248,10 +251,10 @@ public class Spreadsheet {
                         break;
                     }
             if (dateCell == null) {
-                Logger.WARN("No state date under the titles of sheet " + changed.getKey() + ": not updated");
+                LOGGER.LOG("No state date under the titles of sheet " + changed.getKey() + ": not updated", Logger.LEVEL.WARN);
                 continue;
             }
-            Logger.LOG("State date of sheet " + changed.getKey() + ": " + FORMATTER.formatCellValue(dateCell) + " -> " + date);
+            LOGGER.LOG("State date of sheet " + changed.getKey() + ": " + FORMATTER.formatCellValue(dateCell) + " -> " + date, Logger.LEVEL.INFO);
             dateCell.setCellValue(date);
         }
         rewrite();
@@ -314,14 +317,14 @@ public class Spreadsheet {
                 cell.setCellValue(date);
                 return;
             } catch (DateTimeParseException e) {
-                Logger.WARN("\"" + text + "\" is not a JJ/MM/AAAA date (column of dates): written as text");
+                LOGGER.LOG("\"" + text + "\" is not a JJ/MM/AAAA date (column of dates): written as text", Logger.LEVEL.WARN);
             }
         } else if (kind == ColumnKind.NUMBER) {
             try {
                 cell.setCellValue(Double.parseDouble(text.replace(',', '.').replaceAll("\\s+", "")));
                 return;
             } catch (NumberFormatException e) {
-                Logger.WARN("\"" + text + "\" is not a number (column of numbers): written as text");
+                LOGGER.LOG("\"" + text + "\" is not a number (column of numbers): written as text", Logger.LEVEL.WARN);
             }
         }
         cell.setCellValue(text);

@@ -1,5 +1,7 @@
 package main.java.GxlsxNSAstockDBconverter;
 
+import smv_logger.src.Logger.Logger;
+
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
@@ -7,7 +9,6 @@ import main.java.GxlsxNSAstockDBconverter.utils.ConfigReader;
 import main.java.GxlsxNSAstockDBconverter.utils.GglApiLayer;
 import main.java.GxlsxNSAstockDBconverter.utils.ImportState;
 import main.java.GxlsxNSAstockDBconverter.utils.NsaApi;
-import main.java.GxlsxNSAstockDBconverter.utils.Logger;
 import main.java.GxlsxNSAstockDBconverter.utils.Snapshot;
 import main.java.GxlsxNSAstockDBconverter.utils.Spreadsheet;
 import main.java.GxlsxNSAstockDBconverter.utils.StockDb;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BiFunction;
@@ -35,6 +37,7 @@ import static java.lang.System.exit;
 
 
 public class Main {
+    private static final Logger LOGGER = Logger.getInstance();
     /** A workbook changed on Drive during a run is downloaded and processed again, at most this many times. */
     private static final int MAX_ATTEMPTS = 10;
     /** Exit code when changes could not be uploaded: run.sh keeps the changes file for the next run. */
@@ -74,27 +77,43 @@ public class Main {
                 valid = false;
         }
         if (!valid || confFile == null) {
-            Logger.ERROR("Usage:\n"
+            LOGGER.LOG("Usage:\n"
                     + "\t--conf <config file>                              changes read from the database (db.file, snapshot.file)\n"
-                    + "\t--changes <file.jsonl> --conf <config file>      tests: changes read from the file");
+                    + "\t--changes <file.jsonl> --conf <config file>      tests: changes read from the file", Logger.LEVEL.ERROR);
             exit(EXIT_ERROR);
         }
         int code;
         try {
             ConfigReader config = new ConfigReader(confFile);
+            setLogLevel(config.getLogLevel());
             debugCopy = config.getDebugCopy();
             protectedColumns = config.getProtectedColumns();
             code = changesFile != null ? runChangesFile(config, changesFile) : runDatabase(config);
         } catch (IOException e) {
-            Logger.ERROR_printMsg("Cannot read the configuration " + confFile, e.getMessage());
+            LOGGER.LOG("Cannot read the configuration " + confFile, e, Logger.LEVEL.ERROR);
             code = EXIT_ERROR;
         } catch (Exception e) {
-            Logger.ERROR_printStacktrace("Unexpected error.", e.getStackTrace());
-            e.printStackTrace();
+            LOGGER.LOG("Unexpected error.", e, Logger.LEVEL.ERROR);
             code = EXIT_RETRY_LATER;
         }
         if (code != 0)
             exit(code);
+    }
+
+    /** Key log.level: FATAL, ERROR, WARN, INFO (default), DEBUG, TRACE or ALL; until it is read, ERROR. */
+    private static void setLogLevel(String name) {
+        Logger.LEVEL level = Logger.LEVEL.INFO;
+        boolean unknown = false;
+        if (name != null)
+            try {
+                level = Logger.LEVEL.valueOf(name.toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                unknown = true;
+            }
+        LOGGER.setMax_logLevel(level);
+        if (unknown)
+            LOGGER.LOG("Unknown log.level \"" + name + "\" (FATAL, ERROR, WARN, INFO, DEBUG, TRACE, ALL): INFO used",
+                    Logger.LEVEL.WARN);
     }
 
     /** Test mode: the lines of the file, applied in their order. */
@@ -120,27 +139,26 @@ public class Main {
         String dbFile = config.getDbFile();
         String snapshotFile = config.getSnapshotFile();
         if (dbFile == null || snapshotFile == null) {
-            Logger.ERROR("db.file and snapshot.file are required in the configuration (or use --changes)");
+            LOGGER.LOG("db.file and snapshot.file are required in the configuration (or use --changes)", Logger.LEVEL.ERROR);
             return EXIT_ERROR;
         }
         ImportState importState = null;
         if (config.getApiUrl() != null) {
             if (config.getApiEmail() == null || config.getApiPassword() == null || config.getImportStateFile() == null) {
-                Logger.ERROR("api.url is set: api.email, api.password and import.state.file are required");
+                LOGGER.LOG("api.url is set: api.email, api.password and import.state.file are required", Logger.LEVEL.ERROR);
                 return EXIT_ERROR;
             }
             String protectedValue = protectedImportedColumn();
             if (protectedValue != null) {
-                Logger.ERROR("protected.columns holds \"" + protectedValue + "\", compared by the import: an app change"
+                LOGGER.LOG("protected.columns holds \"" + protectedValue + "\", compared by the import: an app change"
                         + " of this column would never reach the workbooks and the import would undo it."
-                        + " Remove it from protected.columns (or the key itself)");
+                        + " Remove it from protected.columns (or the key itself)", Logger.LEVEL.ERROR);
                 return EXIT_ERROR;
             }
             try {
                 importState = ImportState.load(Paths.get(config.getImportStateFile()));
             } catch (IOException e) {
-                Logger.ERROR_printMsg("Cannot read the import state (not recreated: its temporary ids would be reused)",
-                        e.getMessage());
+                LOGGER.LOG("Cannot read the import state (not recreated: its temporary ids would be reused)", e, Logger.LEVEL.ERROR);
                 return EXIT_ERROR;
             }
         }
@@ -151,18 +169,17 @@ public class Main {
             current = StockDb.read(dbFile);
             snapshot = Snapshot.load(snapshotPath);
         } catch (SQLException e) {
-            Logger.ERROR_printMsg("Cannot read the database " + dbFile, e.getMessage());
+            LOGGER.LOG("Cannot read the database " + dbFile, e, Logger.LEVEL.ERROR);
             return EXIT_ERROR;
         } catch (IOException e) {
-            Logger.ERROR_printMsg("Cannot read the snapshot (not recreated: the changes not uploaded yet would be lost)",
-                    e.getMessage());
+            LOGGER.LOG("Cannot read the snapshot (not recreated: the changes not uploaded yet would be lost)", e, Logger.LEVEL.ERROR);
             return EXIT_ERROR;
         }
         Map<Integer, EquipmentState> saved = snapshot;
         if (snapshot == null) {
             if (importState == null)
                 return saveSnapshot(snapshotPath, current, current.size() + " equipment: snapshot created, nothing written");
-            Logger.LOG(current.size() + " equipment: first run, every equipment is written to the workbooks before the import");
+            LOGGER.LOG(current.size() + " equipment: first run, every equipment is written to the workbooks before the import", Logger.LEVEL.INFO);
             snapshot = new LinkedHashMap<>();
         }
 
@@ -196,7 +213,7 @@ public class Main {
                 + changes.size() + " cell(s); uploaded: " + (uploaded.isEmpty() ? "none" : String.join(", ", uploaded))
                 + (failed.isEmpty() ? "" : "; not uploaded, retried at the next run: " + String.join(", ", failed));
         if (summary != null)
-            Logger.LOG(summary);
+            LOGGER.LOG(summary, Logger.LEVEL.INFO);
         Map<Integer, EquipmentState> next = Snapshot.advance(snapshot, current, changes, uploadedSheets);
         int code = failed.isEmpty() ? 0 : EXIT_RETRY_LATER;
         if (importState != null) {
@@ -250,7 +267,7 @@ public class Main {
                             config.getApiPassword(), state);
                     WorkbookImport.Result result = WorkbookImport.apply(plan, api, lastUpdate);
                     if (result.summary() != null)
-                        Logger.LOG(result.summary());
+                        LOGGER.LOG(result.summary(), Logger.LEVEL.INFO);
                     if (result.failed)
                         code = EXIT_RETRY_LATER;
                     complete = result.complete && !result.failed;
@@ -266,11 +283,11 @@ public class Main {
                 } else
                     complete = !plan.deferred();
             } catch (SQLException e) {
-                Logger.ERROR_printMsg("Import: cannot read the database " + config.getDbFile(), e.getMessage());
+                LOGGER.LOG("Import: cannot read the database " + config.getDbFile(), e, Logger.LEVEL.ERROR);
                 code = EXIT_ERROR;
                 complete = false;
             } catch (IOException e) {
-                Logger.ERROR_printMsg("Import: cannot write the import state " + config.getImportStateFile(), e.getMessage());
+                LOGGER.LOG("Import: cannot write the import state " + config.getImportStateFile(), e, Logger.LEVEL.ERROR);
                 return EXIT_ERROR;
             }
             for (Map.Entry<String, WorkbookSync> sync : fetched.entrySet())
@@ -280,7 +297,7 @@ public class Main {
         try {
             state.save();
         } catch (IOException e) {
-            Logger.ERROR_printMsg("Import: cannot write the import state " + config.getImportStateFile(), e.getMessage());
+            LOGGER.LOG("Import: cannot write the import state " + config.getImportStateFile(), e, Logger.LEVEL.ERROR);
             return EXIT_ERROR;
         }
         return code;
@@ -291,12 +308,12 @@ public class Main {
         try {
             Snapshot.save(file, states);
         } catch (IOException e) {
-            Logger.ERROR_printMsg("Cannot write the snapshot " + file
-                    + ": the changes uploaded will be applied again at the next run", e.getMessage());
+            LOGGER.LOG("Cannot write the snapshot " + file
+                    + ": the changes uploaded will be applied again at the next run", e, Logger.LEVEL.ERROR);
             return EXIT_ERROR;
         }
         if (summary != null)
-            Logger.LOG(summary);
+            LOGGER.LOG(summary, Logger.LEVEL.INFO);
         return 0;
     }
 
@@ -335,9 +352,8 @@ public class Main {
 
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             GglApiLayer tcpLayer = driveLayers.apply(fileName, serviceAccountKey);
-            tcpLayer.setQuiet(mine.isEmpty());
             if (!tcpLayer.checkConnection()) {
-                Logger.ERROR("Unable to connect to Google Drive.");
+                LOGGER.LOG("Unable to connect to Google Drive.", Logger.LEVEL.ERROR);
                 return new WorkbookSync(false, null, null);
             }
             try {
@@ -355,8 +371,8 @@ public class Main {
                     editFile(ln, workbook);
                 spreadsheet.stampStateDate(LocalDate.now(CLUB_ZONE));
                 if (!tcpLayer.isUnchangedSinceDownload()) {
-                    Logger.WARN(spreadsheet.getFileName() + " changed on Drive during the run: attempt "
-                            + attempt + "/" + MAX_ATTEMPTS + ", processed again");
+                    LOGGER.LOG(spreadsheet.getFileName() + " changed on Drive during the run: attempt "
+                            + attempt + "/" + MAX_ATTEMPTS + ", processed again", Logger.LEVEL.WARN);
                     continue;
                 }
                 if (debugCopy != null)
@@ -366,11 +382,11 @@ public class Main {
                 tcpLayer.uploadFile(spreadsheet.getBaos());
                 return new WorkbookSync(true, spreadsheet, null);
             } catch (IOException | GeneralSecurityException e) {
-                Logger.ERROR_printMsg("Cannot update " + fileName + ": changes kept for the next run.", e.getMessage());
+                LOGGER.LOG("Cannot update " + fileName + ": changes kept for the next run.", e, Logger.LEVEL.ERROR);
                 return new WorkbookSync(false, null, null);
             }
         }
-        Logger.WARN(fileName + " still changed on Drive after " + MAX_ATTEMPTS + " attempts: changes kept for the next run");
+        LOGGER.LOG(fileName + " still changed on Drive after " + MAX_ATTEMPTS + " attempts: changes kept for the next run", Logger.LEVEL.WARN);
         return new WorkbookSync(false, null, null);
     }
 
@@ -397,7 +413,7 @@ public class Main {
     private static void editFile(String ln, Map<String, Spreadsheet> spreadsheets) {
         Gson gson = new Gson();
         JsonObject json = gson.fromJson(ln, JsonObject.class);
-        Logger.LOG("#" + spreadsheets.size());
+        LOGGER.LOG("#" + spreadsheets.size(), Logger.LEVEL.DEBUG);
         try {
             // "op": "delete" for an equipment deleted in the app (row marked, never removed); a cell edit otherwise
             boolean delete = json.has("op") && "delete".equalsIgnoreCase(json.get("op").getAsString());
@@ -423,12 +439,12 @@ public class Main {
     }
 
     private static void promptHelp(String params) {
-        Logger.WARN("Params not valid. You entered:" +
+        LOGGER.LOG("Params not valid. You entered:" +
                 "\n" + params +
                 "\n Expected params :" +
                 "\n{\"sheetName\":\"val\", \"idCol\":\"val\", \"idKey\":\"val\", \"editCol\":\"val\", \"newVal\":\"val\"}" +
                 "\nor, for an equipment deleted in the app (its identification cell is marked):" +
-                "\n{\"op\":\"delete\", \"sheetName\":\"val\", \"idCol\":\"val\", \"idKey\":\"val\"}");
+                "\n{\"op\":\"delete\", \"sheetName\":\"val\", \"idCol\":\"val\", \"idKey\":\"val\"}", Logger.LEVEL.WARN);
     }
 
 }

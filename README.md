@@ -45,6 +45,7 @@ Declared in `pom.xml`:
 | `org.apache.poi:poi` | 5.5.1 | Workbook model |
 | `org.apache.poi:poi-ooxml` | 5.5.1 | `.xlsx` (XSSF) reading / writing |
 | `org.apache.logging.log4j:log4j-api` / `log4j-core` | 2.20.0 | Logging backend required by POI |
+| `smv:smv_logger` | 1.1.0 | Logs of the converter (`~/Documents/dev/smv_logger`, installed in the local Maven repository: see *Build*) |
 | `com.google.apis:google-api-services-drive` | v3-rev20251210-2.0.0 | Drive v3 client |
 | `com.google.api-client:google-api-client` | 2.8.1 | Google API client (brings `google-http-client`, `-gson`, `-apache-v2`, `google-auth-library-oauth2-http`) |
 | `com.google.oauth-client:google-oauth-client` | 1.39.0 | OAuth 2 client |
@@ -78,6 +79,8 @@ import.state.file=/var/lib/nsa/drive/import.state.json
 #protected.columns=Identification;Identification Bloc
 # Local tests only: copy of each workbook written before its upload (leave unset on the server)
 #debug.copy=debug.xlsx
+# Log level: FATAL, ERROR, WARN, INFO (default), DEBUG (detail of each cell, Drive files, stack traces), TRACE, ALL
+#log.level=INFO
 ```
 
 | Key | Meaning |
@@ -86,6 +89,7 @@ import.state.file=/var/lib/nsa/drive/import.state.json
 | `fileName.det_et_stabs` | Regulators / BCDs workbook (sheets `Détendeur NSA`, `Stab NSA`) |
 | `apiKey` | Path of the service account JSON key file |
 | `protected.columns` | Columns written only when the row is created (reference unknown to the sheet), `;`-separated. Absent: `Identification;Identification Bloc` (defined in the code). Present but empty: no protected column. With the import, a column it compares (state, characteristic, revision date, stock) is refused (exit code 1): an app change of it would never reach the workbook, and the import would undo it |
+| `log.level` | Log level (smv_logger): `INFO` by default; `DEBUG` adds the detail of each cell written, the Drive file list and the stack trace of the errors. An unknown value: warning, `INFO` |
 | `debug.copy` | **Local tests only**: file where a copy of each workbook is written before its upload. Unset (the default): no copy. Never set it on the server: the copy holds the club's data |
 | `db.file` | NSA-app database of the organisation, opened **read-only** (required in database mode) |
 | `snapshot.file` | Snapshot (JSON), in a directory writable by the user of the cron (required in database mode) |
@@ -191,7 +195,7 @@ Echo: the equipment written enter the snapshot with their new database values, s
 to the workbooks (unless the app changed them meanwhile).
 
 Drive access: a workbook without change to write is downloaded only if its Drive version differs from the one
-entirely imported; a run with nothing to write nor to import only reads the two versions and logs nothing.
+entirely imported; a run with nothing to write nor to import only reads the two versions and logs only the log level line.
 A workbook just uploaded is compared at once, and downloaded again at the next run.
 
 Refusals and errors: a change refused by the server (e.g. reference already used, 409) drops that equipment
@@ -250,23 +254,29 @@ Lines with missing fields are skipped with a warning showing the expected format
 ## Build
 
 ```bash
+(cd ~/Documents/dev/smv_logger && mvn install)    # once, and after each change of smv_logger
 mvn package
-# -> target/GxlsxNSAstockDBconverter-1.0.3.jar (shaded, runnable, ~29 MB)
+# -> target/GxlsxNSAstockDBconverter-1.0.4.jar (shaded, runnable, ~29 MB)
 ```
+
+Logs (smv_logger): `<date time> [ LEVEL ] CLASS::METHOD…@line N… : message`, ERROR and FATAL on the standard
+error, the other levels on the standard output (the cron sends both to `gdrive.log`). Each run starts with the
+line `[ ALL ] LOGGER::SETMAX_LOGLEVEL… : max log level set to INFO`, written by smv_logger when the level of
+`log.level` is set.
 
 Use this jar: the IntelliJ artifact does not contain the Google and SQLite libraries (`NoClassDefFoundError`).
 
 ## Run
 
 ```bash
-java -jar GxlsxNSAstockDBconverter-1.0.3.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
-java -jar GxlsxNSAstockDBconverter-1.0.3.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
+java -jar GxlsxNSAstockDBconverter-1.0.4.jar --conf /etc/NSA/GxlsxNSAstockDB_converter.conf     # database mode
+java -jar GxlsxNSAstockDBconverter-1.0.4.jar --changes test/changes-test.jsonl --conf my.conf  # test mode
 ```
 
 Options in any order. Each run logs one summary line when something was written
 (`3 equipment changed, 7 cell(s); uploaded: …`) and one when something was imported
 (`Import from the workbooks: 2 equipment created, 1 updated, 0 kept …, 0 refused by the server`);
-a run without changes logs nothing.
+a run without changes logs only the log level line.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -293,7 +303,7 @@ upload; as both workbooks use the same file, it holds the last one.
 # 1. directory of the snapshot and of the lock, for the cron user only
 sudo install -d -o www-data -g www-data -m 700 /var/lib/nsa/drive
 # 2. jar and script (built with mvn package)
-sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.3.jar /opt/NSA/GxlsxNSAstockDBconverter-latest.jar
+sudo install -o root -g www-data -m 640 target/GxlsxNSAstockDBconverter-1.0.4.jar /opt/NSA/GxlsxNSAstockDBconverter-latest.jar
 sudo install -o root -g www-data -m 750 run.sh /opt/NSA/runGdrive.sh
 # 3. configuration: db.file and snapshot.file (changes.file is no longer used); key and conf readable by www-data
 C=/etc/NSA/GxlsxNSAstockDB_converter.conf
@@ -332,7 +342,6 @@ src/main/java/GxlsxNSAstockDBconverter/
     ├── ImportState.java      State of the import (device, temporary ids, token, last run, Drive versions)
     ├── GglApiLayer.java      Drive access (service account, 3 retries, list/download/update)
     ├── Spreadsheet.java      POI workbook wrapper, editSheet(), markDeleted()
-    └── Logger.java           Console logger (colored INFO/WARN/ERROR with file:method:line)
 src/META-INF/MANIFEST.MF      Main class for the IntelliJ artifact
 test/TestPOI.java             Manual POI check (not a unit test, does not compile as is)
 test/changes-test.jsonl, .md  Test mode file covering every rule, with the expected results

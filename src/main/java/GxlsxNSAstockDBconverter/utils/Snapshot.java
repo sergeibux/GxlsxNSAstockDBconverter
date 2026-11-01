@@ -1,5 +1,7 @@
 package main.java.GxlsxNSAstockDBconverter.utils;
 
+import smv_logger.src.Logger.Logger;
+
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
@@ -32,6 +34,7 @@ import java.util.Set;
  * The snapshot of an equipment advances only once its changes are uploaded, so a failed run is retried.
  */
 public final class Snapshot {
+    private static final Logger LOGGER = Logger.getInstance();
 
     /** One change for the workbooks: a line of the changes format (see the README) and the equipment it comes from. */
     public static final class Change {
@@ -123,15 +126,15 @@ public final class Snapshot {
             EquipmentState now = current.get(id);
             if (before == null) {
                 if (now.sheet == null)
-                    Logger.WARN("New equipment \"" + now.reference + "\": type \"" + now.type + "\" has no sheet, not written");
+                    LOGGER.LOG("New equipment \"" + now.reference + "\": type \"" + now.type + "\" has no sheet, not written", Logger.LEVEL.WARN);
                 else
                     addAll(edits, now);
             } else if (now == null) {
                 if (before.sheet != null)
                     deletions.add(deletion(before));
             } else if (!Objects.equals(before.type, now.type)) {
-                Logger.WARN("Equipment \"" + now.reference + "\": type changed from \"" + before.type + "\" to \""
-                        + now.type + "\", workbooks not updated");
+                LOGGER.LOG("Equipment \"" + now.reference + "\": type changed from \"" + before.type + "\" to \""
+                        + now.type + "\", workbooks not updated", Logger.LEVEL.WARN);
             } else if (now.sheet == null) {
                 // type without a sheet: never written
             } else if (!Spreadsheet.normalize(before.reference).equals(Spreadsheet.normalize(now.reference))) {
